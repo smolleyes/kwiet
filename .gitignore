@@ -1,0 +1,21 @@
+# --- C++ / CMake (apo/) ---
+build/
+out/
+.vs/
+*.user
+CMakeUserPresets.json
+
+# --- Rust (dsp/) ---
+target/
+
+# --- Node / Tauri (ui/) ---
+node_modules/
+dist/
+
+# --- Artefacts locaux de l'installeur (backups .reg, état d'install) ---
+installer/backups/
+installer/state/
+
+# --- Divers ---
+*.log
+Thumbs.db
