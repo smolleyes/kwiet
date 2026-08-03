@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kwiet</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="bar" data-tauri-drag-region>
+      <span class="wordmark" data-tauri-drag-region>KWIET</span>
+      <span class="state" id="state">
+        <i class="dot" id="dot"></i><span id="stateText">connexion…</span>
+      </span>
+    </header>
+
+    <main>
+      <!-- Signature: the gap between the two envelopes is what Kwiet removes. -->
+      <section class="scope" aria-label="Historique du signal">
+        <canvas id="scope" width="656" height="240"></canvas>
+        <div class="scope-idle" id="scopeIdle" hidden>
+          <p class="idle-title">Aucun micro actif</p>
+          <p class="idle-body">Ouvre une application qui écoute ton micro pour voir le signal.</p>
+        </div>
+        <div class="legend">
+          <span class="key key-removed">bruit retiré</span>
+          <span class="key key-kept">voix conservée</span>
+        </div>
+      </section>
+
+      <section class="readout">
+        <p class="eyebrow">Retiré à l'instant</p>
+        <p class="figure"><span id="removed">—</span><span class="unit">dB</span></p>
+      </section>
+
+      <section class="control">
+        <div class="control-head">
+          <label class="eyebrow" for="aggressiveness">Intensité</label>
+          <output class="value" id="aggressivenessValue">50 dB</output>
+        </div>
+        <input
+          type="range"
+          id="aggressiveness"
+          min="0"
+          max="100"
+          step="1"
+          value="50"
+          aria-describedby="aggressivenessHint"
+        />
+        <div class="scale">
+          <span>discrète</span>
+          <span>maximale</span>
+        </div>
+        <p class="hint" id="aggressivenessHint">
+          Plus haut, le silence devient total mais les débuts de mots peuvent
+          être rabotés.
+        </p>
+      </section>
+
+      <section class="toggle-row">
+        <div>
+          <p class="toggle-label">Nettoyage du micro</p>
+          <p class="toggle-sub" id="toggleSub">Actif sur toutes les applications</p>
+        </div>
+        <button
+          type="button"
+          class="switch"
+          id="enabled"
+          role="switch"
+          aria-checked="true"
+          aria-label="Nettoyage du micro"
+        >
+          <span class="knob"></span>
+        </button>
+      </section>
+    </main>
+
+    <footer class="status" id="status">—</footer>
+
+    <script src="main.js"></script>
+  </body>
+</html>

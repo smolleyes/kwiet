@@ -22,7 +22,10 @@
 // Aggressiveness is carried in tenths of a dB to keep the block integer-only.
 #define KWIET_AGGRESSIVENESS_MIN_TENTHS 0
 #define KWIET_AGGRESSIVENESS_MAX_TENTHS 1000
-#define KWIET_AGGRESSIVENESS_DEFAULT_TENTHS 1000
+// 50 dB : compromis retenu à l'écoute. Le maximum (100 dB) descend le bruit
+// jusqu'au silence numérique, ce qui rabote les attaques et fait légèrement
+// pomper ; un plancher résiduel masque ces artefacts.
+#define KWIET_AGGRESSIVENESS_DEFAULT_TENTHS 500
 
 // Peak levels are linear amplitude scaled to 0..32767, which keeps the block
 // integer-only and is plenty for a VU meter.

@@ -57,8 +57,12 @@ const MAX_CHANNELS: u32 = 16;
 const MAX_FRAMES: u32 = 8192;
 
 /// Maximum noise attenuation, in dB, applied when the host sets nothing.
-/// Matches DeepFilterNet's own default: effectively "no limit".
-const DEFAULT_ATTEN_LIM_DB: f32 = 100.0;
+///
+/// Deliberately below DeepFilterNet's own default of 100 dB: suppressing all
+/// the way to digital silence clips speech onsets and pumps audibly, whereas a
+/// residual noise floor masks both. Kept in step with
+/// `KWIET_AGGRESSIVENESS_DEFAULT_TENTHS` in apo/src/KwietControl.h.
+const DEFAULT_ATTEN_LIM_DB: f32 = 50.0;
 
 /// Accepted range for the attenuation limit. Out-of-range values are clamped
 /// rather than rejected: a bad control value must never take audio down.
