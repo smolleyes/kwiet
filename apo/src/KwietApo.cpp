@@ -125,6 +125,15 @@ HRESULT KwietApo::Inner::QueryInterface(REFIID riid, void** ppvObject)
         *ppvObject = static_cast<IAudioProcessingObjectNotifications*>(&o);
     } else if (riid == __uuidof(IAudioProcessingObjectPreferredFormatSupport)) {
         *ppvObject = static_cast<IAudioProcessingObjectPreferredFormatSupport*>(&o);
+    } else if (riid == __uuidof(IApoAuxiliaryInputConfiguration)) {
+        KWIET_LOG("QI ok: IApoAuxiliaryInputConfiguration");
+        *ppvObject = static_cast<IApoAuxiliaryInputConfiguration*>(&o);
+    } else if (riid == __uuidof(IApoAuxiliaryInputRT)) {
+        KWIET_LOG("QI ok: IApoAuxiliaryInputRT");
+        *ppvObject = static_cast<IApoAuxiliaryInputRT*>(&o);
+    } else if (riid == __uuidof(IApoAcousticEchoCancellation)) {
+        KWIET_LOG("QI ok: IApoAcousticEchoCancellation");
+        *ppvObject = static_cast<IApoAcousticEchoCancellation*>(&o);
     } else {
 #if defined(KWIET_DEV_LOG)
         char g[40];
@@ -420,8 +429,9 @@ HRESULT KwietApo::LockForProcess(UINT32 u32NumInputConnections,
 HRESULT KwietApo::UnlockForProcess()
 {
     m_locked.store(false, std::memory_order_release);
-    KWIET_LOG("UnlockForProcess: underruns=%u overruns=%u dspErrors=%u",
-              m_dsp.Underruns(), m_dsp.Overruns(), m_dsp.DspErrors());
+    KWIET_LOG("UnlockForProcess: underruns=%u overruns=%u dspErrors=%u refFrames=%u",
+              m_dsp.Underruns(), m_dsp.Overruns(), m_dsp.DspErrors(),
+              m_auxFrames.load(std::memory_order_relaxed));
 
     if (KwietControlBlock* control = m_controlBlock.load(std::memory_order_acquire)) {
         control->underruns.store(static_cast<int32_t>(m_dsp.Underruns()), std::memory_order_relaxed);
@@ -633,4 +643,80 @@ HRESULT KwietApo::GetPreferredOutputFormat(IAudioMediaType* inputFormat,
         *preferredFormat = nullptr;
     }
     return E_NOTIMPL;
+}
+
+// ---------------------------------------------------------------------------
+// IApoAuxiliaryInputConfiguration / IApoAuxiliaryInputRT
+//
+// The reference stream carries what the machine is playing, so an echo
+// canceller can subtract it from the microphone. Registering for it is also
+// what gets the APO accepted into the COMMUNICATIONS pipe at all.
+
+HRESULT KwietApo::AddAuxiliaryInput(DWORD dwInputId, UINT32 cbDataSize, BYTE* pbyData,
+                                    APO_CONNECTION_DESCRIPTOR* pInputConnection)
+{
+    UNREFERENCED_PARAMETER(cbDataSize);
+    UNREFERENCED_PARAMETER(pbyData);
+
+    if (pInputConnection == nullptr || pInputConnection->pFormat == nullptr) {
+        return E_POINTER;
+    }
+    UNCOMPRESSEDAUDIOFORMAT fmt{};
+    if (!IsFloat32(pInputConnection->pFormat, &fmt)) {
+        return kFormatNotSupported;
+    }
+
+    m_auxInputId = dwInputId;
+    m_auxChannels = fmt.dwSamplesPerFrame;
+    m_auxSampleRate = static_cast<UINT32>(fmt.fFramesPerSecond);
+    m_auxFrames.store(0, std::memory_order_relaxed);
+
+    KWIET_LOG("AddAuxiliaryInput: id=%lu, %u ch, %u Hz", dwInputId, m_auxChannels,
+              m_auxSampleRate);
+    return S_OK;
+}
+
+HRESULT KwietApo::RemoveAuxiliaryInput(DWORD dwInputId)
+{
+    if (dwInputId != m_auxInputId) {
+        return E_INVALIDARG;
+    }
+    KWIET_LOG("RemoveAuxiliaryInput: id=%lu, %u frames seen", dwInputId,
+              m_auxFrames.load(std::memory_order_relaxed));
+    m_auxInputId = kNoAuxInput;
+    m_auxChannels = 0;
+    m_auxSampleRate = 0;
+    return S_OK;
+}
+
+HRESULT KwietApo::IsInputFormatSupported(IAudioMediaType* pRequestedInputFormat,
+                                         IAudioMediaType** ppSupportedInputFormat)
+{
+    // Same rule as the capture side: interleaved float32, whatever the rate and
+    // channel count of the render endpoint happen to be.
+    if (pRequestedInputFormat == nullptr || ppSupportedInputFormat == nullptr) {
+        return E_POINTER;
+    }
+    *ppSupportedInputFormat = nullptr;
+    if (!IsFloat32(pRequestedInputFormat)) {
+        return kFormatNotSupported;
+    }
+    *ppSupportedInputFormat = pRequestedInputFormat;
+    pRequestedInputFormat->AddRef();
+    return S_OK;
+}
+
+void KwietApo::AcceptInput(DWORD dwInputId, const APO_CONNECTION_PROPERTY* pInputConnection)
+{
+    // REAL-TIME PATH, same rules as APOProcess.
+    // MILESTONE: the reference is only counted, so the log can show it really
+    // arrives. Cancelling it needs an AEC in the DSP worker -- until then this
+    // APO must NOT ship, because presenting IApoAcousticEchoCancellation makes
+    // Chrome switch its own echo canceller off.
+    if (pInputConnection == nullptr || dwInputId != m_auxInputId) {
+        return;
+    }
+    if (pInputConnection->u32BufferFlags == BUFFER_VALID) {
+        m_auxFrames.fetch_add(pInputConnection->u32ValidFrameCount, std::memory_order_relaxed);
+    }
 }

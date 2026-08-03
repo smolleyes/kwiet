@@ -19,6 +19,7 @@ add_library(kwiet_apo SHARED
     src/DspHost.cpp
     src/DspHost.h
     src/KwietControl.h
+    src/KwietAec.h
     src/KwietApo.cpp
     src/KwietApo.def
     src/KwietApo.h

@@ -7,6 +7,7 @@
 
 #include "ControlShm.h"
 #include "DspHost.h"
+#include "KwietAec.h"
 #include "KwietSe3.h"
 
 #include "KwietGuids.h"
@@ -28,6 +29,9 @@ class KwietApo final
     , public IAudioSystemEffects3
     , public IAudioProcessingObjectNotifications
     , public IAudioProcessingObjectPreferredFormatSupport
+    , public IApoAuxiliaryInputConfiguration
+    , public IApoAuxiliaryInputRT
+    , public IApoAcousticEchoCancellation
 {
 public:
     // Factory entry point; supports aggregated and standalone creation.
@@ -92,6 +96,21 @@ public:
     STDMETHODIMP GetPreferredOutputFormat(IAudioMediaType* inputFormat,
                                           IAudioMediaType** preferredFormat) override;
 
+    // IApoAuxiliaryInputConfiguration — the reference (render) stream used for
+    // echo cancellation. Non-RT.
+    STDMETHODIMP AddAuxiliaryInput(DWORD dwInputId, UINT32 cbDataSize, BYTE* pbyData,
+                                   APO_CONNECTION_DESCRIPTOR* pInputConnection) override;
+    STDMETHODIMP RemoveAuxiliaryInput(DWORD dwInputId) override;
+    STDMETHODIMP IsInputFormatSupported(IAudioMediaType* pRequestedInputFormat,
+                                        IAudioMediaType** ppSupportedInputFormat) override;
+
+    // IApoAuxiliaryInputRT — real-time delivery of the reference audio.
+    STDMETHODIMP_(void) AcceptInput(DWORD dwInputId,
+                                    const APO_CONNECTION_PROPERTY* pInputConnection) override;
+
+    // IApoAcousticEchoCancellation declares no method: presenting it is the
+    // whole point.
+
 private:
     // Non-delegating IUnknown handed to the aggregator; owns the refcount.
     class Inner final : public IUnknown
@@ -133,6 +152,15 @@ private:
     // LockForProcess, stopped at UnlockForProcess; if it fails to start the
     // APO simply stays a passthrough.
     DspHost m_dsp;
+
+    // Reference stream for echo cancellation. Registered by the engine through
+    // AddAuxiliaryInput and fed by AcceptInput on the RT thread.
+    // MILESTONE: the audio is currently only counted, not yet cancelled.
+    static constexpr DWORD kNoAuxInput = 0xFFFFFFFF;
+    DWORD  m_auxInputId = kNoAuxInput;
+    UINT32 m_auxChannels = 0;
+    UINT32 m_auxSampleRate = 0;
+    std::atomic<UINT32> m_auxFrames{ 0 };   // frames of reference seen this stream
 
     // Shared with the UI. Opened alongside the DSP; null when unavailable,
     // in which case the APO runs on its built-in settings.

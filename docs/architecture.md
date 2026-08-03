@@ -626,6 +626,42 @@ interfaces que `audiodg` nous demande déjà et auxquelles nous répondons
 `E_NOINTERFACE` (visible dans nos logs depuis le jalon 1). Bien plus de
 travail, mais c'est la voie que Microsoft a ouverte pour ses propres effets.
 
+### Piste B, étape 1 : le contrat AEC (2026-08-04)
+
+Trois interfaces extraites dans `apo/src/KwietAec.h` et implémentées :
+
+| Interface | Rôle |
+|---|---|
+| `IApoAcousticEchoCancellation` | **marqueur, aucune méthode** — la présenter suffit à se déclarer annuleur d'écho |
+| `IApoAuxiliaryInputConfiguration` | enregistrement du flux de référence (rendu), hors RT |
+| `IApoAuxiliaryInputRT` | `AcceptInput()` livre l'audio de référence **sur le thread temps-réel**, séparément d'`APOProcess` |
+
+Résultat mesuré : le moteur nous interroge et **accepte** ces interfaces, puis
+appelle `AddAuxiliaryInput: id=1, 2 ch, 48000 Hz`. **Il nous enregistre donc
+bien un flux de référence** — nous sommes reconnus comme APO capable d'AEC.
+
+Mais l'instance qui reçoit ce flux et atteint `LockForProcess` est initialisée
+en mode **DEFAULT**. Les instances **COMMUNICATIONS restent détruites**. Le
+verrou n'est donc pas (seulement) le contrat AEC.
+
+> Test non concluant à ce stade : lors de la dernière vérification le micro
+> était muet, donc aucun flux communications n'était réellement ouvert. **À
+> refaire micro actif dans une visioconférence.**
+
+Candidats restants pour l'acceptation en COMMUNICATIONS :
+
+- `IApoAcousticEchoCancellation2` (`{F235855F-...}`), toujours refusée faute de
+  la structure `APO_REFERENCE_STREAM_PROPERTIES`, absente du header vendored ;
+- `{69E1F79F-6EAE-4517-BE9F-13AA90E30014}`, interface non identifiée, demandée
+  systématiquement et refusée ;
+- les `Flags` d'enregistrement : Voice Clarity déclare `0x0C`
+  (`FRAMESPERSECOND` + `BITSPERSAMPLE` doivent correspondre) là où nous
+  déclarons `0x0F` — nous imposons en plus `INPLACE` et
+  `SAMPLESPERFRAME_MUST_MATCH`, ce qui interdit au moteur de nous confier un
+  mixdown multicanal → mono, exactement ce qu'un AEC fait.
+
+Le dernier point est le plus suspect et le moins coûteux à tester.
+
 ### Ce que ça change pour le produit
 
 `docs/architecture.md` notait depuis le début « les flux exclusive/raw
