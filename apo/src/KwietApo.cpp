@@ -123,8 +123,14 @@ HRESULT KwietApo::Inner::QueryInterface(REFIID riid, void** ppvObject)
         *ppvObject = static_cast<IAudioSystemEffects3*>(&o);
     } else if (riid == __uuidof(IAudioProcessingObjectNotifications)) {
         *ppvObject = static_cast<IAudioProcessingObjectNotifications*>(&o);
-    } else if (riid == __uuidof(IAudioProcessingObjectPreferredFormatSupport)) {
-        *ppvObject = static_cast<IAudioProcessingObjectPreferredFormatSupport*>(&o);
+        // NOTE: IAudioProcessingObjectPreferredFormatSupport is deliberately
+        // NOT offered. Implementing it and answering E_NOTIMPL is not the same
+        // as not having it: the engine must resolve an output format for the
+        // communications pipe, and "I don't know" leaves it stuck, whereas
+        // E_NOINTERFACE sends it to the normal IsOutputFormatSupported
+        // negotiation. Aec3APO -- a third-party AEC APO that works -- does not
+        // implement it either. The methods are kept for a future version that
+        // answers properly with a mono format.
     } else if (riid == __uuidof(IApoAuxiliaryInputConfiguration)) {
         KWIET_LOG("QI ok: IApoAuxiliaryInputConfiguration");
         *ppvObject = static_cast<IApoAuxiliaryInputConfiguration*>(&o);
