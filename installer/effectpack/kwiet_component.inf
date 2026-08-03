@@ -71,11 +71,12 @@ HKR,EffectPackRegistration\%EFFECT_CLSID%\FxProperties\FX\0\%KWIET_MFX_CONTEXT%\
 HKR,EffectPackRegistration\%EFFECT_CLSID%\FxProperties\FX\0\%KWIET_MFX_CONTEXT%\User
 HKR,EffectPackRegistration\%EFFECT_CLSID%\FxProperties,%PKEY_FX_ModeEffectClsid%,,%KWIET_FX_MODE_CLSID%
 HKR,EffectPackRegistration\%EFFECT_CLSID%\FxProperties,%PKEY_CompositeFX_ModeEffectClsid%,%REG_MULTI_SZ%,%KWIET_FX_MODE_CLSID%
-; RAW volontairement ABSENT de cette liste. Chromium ne demande le mode raw
-; (AUDCLNT_STREAMOPTIONS_RAW, qui contourne tous les APO) que si l'endpoint
-; annonce le supporter. L'annoncer revenait à autoriser Chrome à nous
-; contourner. Cf. docs/architecture.md §11.
-HKR,EffectPackRegistration\%EFFECT_CLSID%\FxProperties,%PKEY_MFX_ProcessingModes_Supported_For_Streaming%,%REG_MULTI_SZ%,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%,%AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS%,%AUDIO_SIGNALPROCESSINGMODE_SPEECH%
+; Liste identique à celle de Voice Clarity, RAW compris. Avoir retiré RAW était
+; une fausse piste : le mode raw de l'endpoint vient du pilote, pas de nous, et
+; cette liste s'est révélée la SEULE différence fonctionnelle restante avec le
+; pack de Microsoft — qui, lui, entre bien dans le pipe communications de
+; Chrome. Cf. docs/architecture.md §11.
+HKR,EffectPackRegistration\%EFFECT_CLSID%\FxProperties,%PKEY_MFX_ProcessingModes_Supported_For_Streaming%,%REG_MULTI_SZ%,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%,%AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS%,%AUDIO_SIGNALPROCESSINGMODE_SPEECH%,%AUDIO_SIGNALPROCESSINGMODE_RAW%
 HKR,EffectPackRegistration\%EFFECT_CLSID%\FxProperties,%PKEY_FX_ExcludeForHWIDs%,%REG_MULTI_SZ%,"ROOT\*","*VirtualAudio*","*Virtual_Audio*","*VirtualDevice*"
 
 ; Settings manager COM class (référencée par PKEY_FX_MEP_UserInterfaceClsid).

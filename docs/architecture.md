@@ -692,7 +692,35 @@ moteur : `Flags = 0xC`), conversion de canaux implémentée
 | Implémenter le contrat AEC (3 interfaces) | interfaces acceptées, `AddAuxiliaryInput` appelé… mais en mode DEFAULT seulement |
 | `Flags` `0x0F` → `0x0C` + sortie mono possible | sans effet |
 
-### L'expérience de contrôle qui manque
+### ✅ Expérience de contrôle : Voice Clarity, elle, y arrive
+
+Voice Clarity sélectionnée sur l'endpoint, Meet en cours, micro à −4,3 dB :
+`voiceclaritycpuapo.dll` **est chargée dans `audiodg`**. Donc **un APO peut
+entrer dans le pipe communications de Chrome** — la piste n'est pas un
+cul-de-sac, il reste à trouver ce qui nous en distingue.
+
+### Le diff qui répond
+
+Comparaison exhaustive des deux enregistrements de composant
+(`AudioEngine\AudioProcessingObjects` + `EffectPackRegistration`), GUID propres
+à chaque pack normalisés. Hors cosmétique (noms, auteur, numéros de version),
+il ne reste **qu'une seule différence fonctionnelle** :
+
+```
+PKEY_MFX_ProcessingModes_Supported_For_Streaming
+  Voice Clarity : DEFAULT | COMMUNICATIONS | SPEECH | RAW
+  Kwiet         : DEFAULT | COMMUNICATIONS | SPEECH
+```
+
+C'est précisément le `RAW` retiré en « piste A », sur une hypothèse démentie
+depuis (le mode raw de l'endpoint vient du pilote, pas de nous). Restauré.
+
+> Leçon de méthode : la piste A a été menée sur un raisonnement plausible mais
+> non vérifié, et a introduit la seule divergence restante avec le pack de
+> référence. Le diff systématique contre un pack qui fonctionne aurait dû venir
+> avant toute modification spéculative.
+
+### L'expérience de contrôle qui manquait
 
 Toutes ces hypothèses supposent que **Voice Clarity, elle, fonctionne avec
 Meet**. Ce n'est pas vérifié. Il faut sélectionner Voice Clarity sur l'endpoint,
