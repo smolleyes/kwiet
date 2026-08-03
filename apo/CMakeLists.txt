@@ -13,6 +13,7 @@ endif()
 option(KWIET_DEV_LOG "Enable Kwiet dev diagnostics logging" OFF)
 
 add_library(kwiet_apo SHARED
+    src/ChannelMix.h
     src/ControlShm.cpp
     src/ControlShm.h
     src/Dll.cpp

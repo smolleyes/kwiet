@@ -5,6 +5,7 @@
 
 #include <atomic>
 
+#include "ChannelMix.h"
 #include "ControlShm.h"
 #include "DspHost.h"
 #include "KwietAec.h"
@@ -138,8 +139,11 @@ private:
 
     bool   m_initialized = false;
     GUID   m_processingMode{};      // from APOInitSystemEffects2, zero otherwise
-    UINT32 m_samplesPerFrame = 0;   // interleaved channel count
-    UINT32 m_bytesPerFrame = 0;
+    // Input and output channel counts may differ: the communications pipe
+    // feeds a mono encoder. Only the rate and sample container must match,
+    // which is what the registration flags now say.
+    UINT32 m_inChannels = 0;
+    UINT32 m_outChannels = 0;
     UINT32 m_sampleRate = 0;
     HNSTIME m_latencyHns = 0;       // fixed pipeline delay, 0 until locked
 

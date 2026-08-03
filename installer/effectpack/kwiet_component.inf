@@ -115,9 +115,15 @@ KWIET_FX_MODE_CLSID = "{65D564E6-9709-4F5C-85CF-449D92949CFE}"
 KWIET_MFX_CONTEXT   = "{7EA00FEC-7CC0-475F-B8A9-9ADECC90E98C}"
 HSA_COM_CLASS_CLSID = "{920816DB-3145-4373-99C2-D19038AE8FDD}"
 
-; APO_FLAG_INPLACE | APO_FLAG_SAMPLESPERFRAME_MUST_MATCH |
-; APO_FLAG_FRAMESPERSECOND_MUST_MATCH | APO_FLAG_BITSPERSAMPLE_MUST_MATCH
-APO_FLAGS                = 0x0000000f
+; APO_FLAG_FRAMESPERSECOND_MUST_MATCH | APO_FLAG_BITSPERSAMPLE_MUST_MATCH.
+; Ni INPLACE ni SAMPLESPERFRAME_MUST_MATCH : promettre une sortie de même
+; largeur que l'entrée exclut l'APO du pipe communications, qui alimente un
+; encodeur mono. Voice Clarity déclare exactement ces deux drapeaux.
+;
+; ATTENTION : c'est CETTE valeur que le moteur lit, pas celle écrite par
+; DllRegisterServer — le catalogue utilisé est celui, scopé au composant, que
+; pose l'INF. Garder les deux en phase avec KwietApo::GetRegistrationProperties.
+APO_FLAGS                = 0x0000000c
 APO_MFX_FriendlyName     = "Kwiet Passthrough APO"
 Copyright                = "Copyright (c) 2026 Kwiet contributors (Apache-2.0)"
 Effect_Pack_FriendlyName = "Kwiet"

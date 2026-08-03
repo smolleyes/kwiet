@@ -170,7 +170,11 @@ HRESULT RegisterApoCatalog()
     if (SUCCEEDED(hr)) hr = WriteRegSz(key, L"Copyright", L"Copyright (c) 2026 Kwiet contributors (Apache-2.0)");
     if (SUCCEEDED(hr)) hr = WriteRegDword(key, L"MajorVersion", 1);
     if (SUCCEEDED(hr)) hr = WriteRegDword(key, L"MinorVersion", 0);
-    if (SUCCEEDED(hr)) hr = WriteRegDword(key, L"Flags", APO_FLAG_INPLACE | APO_FLAG_DEFAULT);
+    // Must stay in step with KwietApo::GetRegistrationProperties.
+    if (SUCCEEDED(hr)) {
+        hr = WriteRegDword(key, L"Flags",
+                           APO_FLAG_FRAMESPERSECOND_MUST_MATCH | APO_FLAG_BITSPERSAMPLE_MUST_MATCH);
+    }
     if (SUCCEEDED(hr)) hr = WriteRegDword(key, L"MinInputConnections", 1);
     if (SUCCEEDED(hr)) hr = WriteRegDword(key, L"MaxInputConnections", 1);
     if (SUCCEEDED(hr)) hr = WriteRegDword(key, L"MinOutputConnections", 1);

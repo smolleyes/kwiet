@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "ChannelMix.h"
 #include "KwietDevLog.h"
 #include "Module.h"
 
@@ -107,16 +108,18 @@ bool DspHost::LoadLibraryFromModuleDir()
     return true;
 }
 
-bool DspHost::Start(UINT32 sampleRate, UINT32 channels, UINT32 framesPerQuantum,
-                    KwietControlBlock* control)
+bool DspHost::Start(UINT32 sampleRate, UINT32 inChannels, UINT32 outChannels,
+                    UINT32 framesPerQuantum, KwietControlBlock* control)
 {
     Stop();
 
-    if (sampleRate == 0 || channels == 0 || framesPerQuantum == 0) {
+    if (sampleRate == 0 || inChannels == 0 || outChannels == 0 || framesPerQuantum == 0) {
         return false;
     }
 
-    m_channels = channels;
+    const UINT32 channels = inChannels;
+    m_channels = inChannels;
+    m_outChannels = outChannels;
     m_quantumFrames = framesPerQuantum;
     m_control = control;
 
@@ -160,7 +163,10 @@ bool DspHost::Start(UINT32 sampleRate, UINT32 channels, UINT32 framesPerQuantum,
 
     m_scratchIn = static_cast<float*>(calloc(m_blockSamples, sizeof(float)));
     m_scratchOut = static_cast<float*>(calloc(m_blockSamples, sizeof(float)));
-    if (m_scratchIn == nullptr || m_scratchOut == nullptr) {
+    // Sized on the quantum, not the block: this is what the RT thread pops.
+    m_rtScratch = static_cast<float*>(
+        calloc(static_cast<size_t>(framesPerQuantum) * channels, sizeof(float)));
+    if (m_scratchIn == nullptr || m_scratchOut == nullptr || m_rtScratch == nullptr) {
         KWIET_LOG("DspHost: scratch allocation failed");
         Stop();
         return false;
@@ -198,8 +204,9 @@ bool DspHost::Start(UINT32 sampleRate, UINT32 channels, UINT32 framesPerQuantum,
     // Release: everything above must be visible to the RT thread before it
     // sees m_active.
     m_active.store(true, std::memory_order_release);
-    KWIET_LOG("DspHost: started, %u Hz, %u ch, quantum=%u, block=%u frames, latency=%u frames",
-              sampleRate, channels, m_quantumFrames, m_blockFrames, m_latencyFrames);
+    KWIET_LOG("DspHost: started, %u Hz, %u->%u ch, quantum=%u, block=%u, latency=%u frames",
+              sampleRate, m_channels, m_outChannels, m_quantumFrames, m_blockFrames,
+              m_latencyFrames);
 
 #if defined(KWIET_DEV_LOG)
     float devDb = 0.0f;
@@ -252,6 +259,8 @@ void DspHost::Stop()
     m_scratchIn = nullptr;
     free(m_scratchOut);
     m_scratchOut = nullptr;
+    free(m_rtScratch);
+    m_rtScratch = nullptr;
 
     if (m_dspModule != nullptr) {
         FreeLibrary(m_dspModule);
@@ -266,6 +275,7 @@ void DspHost::Stop()
 
     m_control = nullptr;
     m_channels = 0;
+    m_outChannels = 0;
     m_quantumFrames = 0;
     m_blockFrames = 0;
     m_blockSamples = 0;
@@ -293,20 +303,30 @@ bool DspHost::ProcessRt(const float* in, float* out, UINT32 frames)
 
     const size_t samples = static_cast<size_t>(frames) * m_channels;
 
-    // Input first: with APO_FLAG_INPLACE the caller may pass in == out, so the
-    // captured audio has to be read before the output buffer is written.
     if (!m_inRing.Push(in, samples)) {
         m_overruns.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
-    if (!m_outRing.Pop(out, samples)) {
-        // Worker is late or dead. Fail open: the caller copies input to
-        // output. The quantum we just pushed will still come out of the ring
-        // later, so a brief doubling is possible -- audible as a glitch, but
-        // never silence and never a stall.
+
+    // Same width on both sides: pop straight into the caller's buffer.
+    if (m_outChannels == m_channels) {
+        if (!m_outRing.Pop(out, samples)) {
+            // Worker is late or dead. Fail open: the caller writes the output
+            // itself. The quantum just pushed will still come out of the ring
+            // later, so a brief doubling is possible -- audible as a glitch,
+            // but never silence and never a stall.
+            m_underruns.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        return true;
+    }
+
+    // Narrower (or wider) output: stage at input width, then mix down.
+    if (frames > m_quantumFrames || !m_outRing.Pop(m_rtScratch, samples)) {
         m_underruns.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
+    MixChannels(m_rtScratch, m_channels, out, m_outChannels, frames);
     return true;
 }
 

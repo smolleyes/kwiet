@@ -219,10 +219,14 @@ HRESULT KwietApo::GetRegistrationProperties(APO_REG_PROPERTIES** ppRegProps)
     ZeroMemory(props, cb);
 
     props->clsid = CLSID_KwietApo;
-    // Identical formats on both sides, and INPLACE: the Windows 11 mode pipe
-    // silently drops non-inplace APOs at graph build (every working catalog
-    // entry on real hardware carries APO_FLAG_INPLACE).
-    props->Flags = static_cast<APO_FLAG>(APO_FLAG_INPLACE | APO_FLAG_DEFAULT);
+    // Rate and sample container must match; the CHANNEL COUNT deliberately
+    // need not. Declaring APO_FLAG_SAMPLESPERFRAME_MUST_MATCH would promise a
+    // same-width output and keeps the APO out of the communications pipe,
+    // which drives a mono encoder. Voice Clarity declares exactly these two
+    // flags for the same reason. APO_FLAG_INPLACE is dropped with it: with a
+    // channel change, in-place is meaningless.
+    props->Flags = static_cast<APO_FLAG>(APO_FLAG_FRAMESPERSECOND_MUST_MATCH
+                                         | APO_FLAG_BITSPERSAMPLE_MUST_MATCH);
     wcscpy_s(props->szFriendlyName, L"Kwiet Passthrough APO");
     wcscpy_s(props->szCopyrightInfo, L"Copyright (c) 2026 Kwiet contributors (Apache-2.0)");
     props->u32MajorVersion = 1;
@@ -341,7 +345,7 @@ HRESULT KwietApo::GetInputChannelCount(UINT32* pu32ChannelCount)
         // Only meaningful once the format is locked.
         return E_FAIL;
     }
-    *pu32ChannelCount = m_samplesPerFrame;
+    *pu32ChannelCount = m_inChannels;
     return S_OK;
 }
 
@@ -371,16 +375,18 @@ HRESULT KwietApo::LockForProcess(UINT32 u32NumInputConnections,
         || !IsFloat32(ppOutputConnections[0]->pFormat, &outFmt)) {
         return kFormatNotSupported;
     }
-    // APO_FLAG_DEFAULT should guarantee this, but a passthrough that guessed
-    // wrong would corrupt audio, so verify.
-    if (inFmt.dwSamplesPerFrame != outFmt.dwSamplesPerFrame
-        || inFmt.dwBytesPerSampleContainer != outFmt.dwBytesPerSampleContainer
+    // Only what the registration flags promise: same rate, same container.
+    // Channel counts may differ -- MixChannels handles the conversion.
+    if (inFmt.dwBytesPerSampleContainer != outFmt.dwBytesPerSampleContainer
         || inFmt.fFramesPerSecond != outFmt.fFramesPerSecond) {
         return kFormatNotSupported;
     }
+    if (inFmt.dwSamplesPerFrame == 0 || outFmt.dwSamplesPerFrame == 0) {
+        return kFormatNotSupported;
+    }
 
-    m_samplesPerFrame = inFmt.dwSamplesPerFrame;
-    m_bytesPerFrame = inFmt.dwSamplesPerFrame * inFmt.dwBytesPerSampleContainer;
+    m_inChannels = inFmt.dwSamplesPerFrame;
+    m_outChannels = outFmt.dwSamplesPerFrame;
     m_sampleRate = static_cast<UINT32>(inFmt.fFramesPerSecond);
 
     // Everything that allocates, loads a DLL or starts a thread happens here,
@@ -395,7 +401,7 @@ HRESULT KwietApo::LockForProcess(UINT32 u32NumInputConnections,
     }
     m_controlBlock.store(control, std::memory_order_release);
 
-    if (m_dsp.Start(m_sampleRate, m_samplesPerFrame, quantumFrames, control)) {
+    if (m_dsp.Start(m_sampleRate, m_inChannels, m_outChannels, quantumFrames, control)) {
         m_dsp.SetEnabled(m_effectEnabled.load(std::memory_order_relaxed));
         if (m_sampleRate != 0) {
             m_latencyHns = static_cast<HNSTIME>(m_dsp.LatencyFrames()) * 10000000
@@ -407,7 +413,7 @@ HRESULT KwietApo::LockForProcess(UINT32 u32NumInputConnections,
 
     if (control != nullptr) {
         control->sampleRate.store(static_cast<int32_t>(m_sampleRate), std::memory_order_relaxed);
-        control->channels.store(static_cast<int32_t>(m_samplesPerFrame), std::memory_order_relaxed);
+        control->channels.store(static_cast<int32_t>(m_inChannels), std::memory_order_relaxed);
         control->latencyFrames.store(static_cast<int32_t>(m_dsp.LatencyFrames()),
                                      std::memory_order_relaxed);
         control->dspActive.store(m_latencyHns != 0 ? 1 : 0, std::memory_order_relaxed);
@@ -420,8 +426,8 @@ HRESULT KwietApo::LockForProcess(UINT32 u32NumInputConnections,
     }
 
     m_locked.store(true, std::memory_order_release);
-    KWIET_LOG("LockForProcess: S_OK, %u ch, %u Hz, quantum=%u frames, latency=%lld hns, control=%d",
-              m_samplesPerFrame, m_sampleRate, quantumFrames,
+    KWIET_LOG("LockForProcess: S_OK, %u->%u ch, %u Hz, quantum=%u, latency=%lld hns, control=%d",
+              m_inChannels, m_outChannels, m_sampleRate, quantumFrames,
               static_cast<long long>(m_latencyHns), control != nullptr);
     return S_OK;
 }
@@ -478,30 +484,27 @@ void KwietApo::APOProcess(UINT32 u32NumInputConnections,
     }
 
     const UINT32 frames = in->u32ValidFrameCount;
-    const size_t bytes = static_cast<size_t>(frames) * m_bytesPerFrame;
+    const size_t inSamples = static_cast<size_t>(frames) * m_inChannels;
+    const size_t outSamples = static_cast<size_t>(frames) * m_outChannels;
 
     if (in->u32BufferFlags == BUFFER_VALID) {
         const float* src = reinterpret_cast<const float*>(in->pBuffer);
         float* dst = reinterpret_cast<float*>(out->pBuffer);
-        const size_t samples = static_cast<size_t>(frames) * m_samplesPerFrame;
 
-        // VU meters. Measured before the DSP because with APO_FLAG_INPLACE the
-        // input buffer may be the output buffer.
         KwietControlBlock* control = m_controlBlock.load(std::memory_order_acquire);
-        const int32_t peakIn = (control != nullptr) ? PeakQ15(src, samples) : 0;
+        const int32_t peakIn = (control != nullptr) ? PeakQ15(src, inSamples) : 0;
 
-        // The DSP pipeline handles the copy when it has audio ready. On any
-        // doubt -- not started, ring underrun, worker gone -- it says so and
-        // we fall open to a plain copy rather than emit silence or block.
+        // The DSP pipeline writes the output itself, channel conversion
+        // included. On any doubt -- not started, ring underrun, worker gone --
+        // it says so and we fall open, converting channels ourselves rather
+        // than emitting silence or blocking.
         if (!m_dsp.ProcessRt(src, dst, frames)) {
-            if (src != dst) {
-                memcpy(dst, src, bytes);
-            }
+            MixChannels(src, m_inChannels, dst, m_outChannels, frames);
         }
 
         if (control != nullptr) {
             control->peakIn.store(peakIn, std::memory_order_relaxed);
-            control->peakOut.store(PeakQ15(dst, samples), std::memory_order_relaxed);
+            control->peakOut.store(PeakQ15(dst, outSamples), std::memory_order_relaxed);
         }
 
         out->u32ValidFrameCount = frames;
@@ -509,10 +512,9 @@ void KwietApo::APOProcess(UINT32 u32NumInputConnections,
     } else {
         // BUFFER_SILENT: the pipeline is left untouched (nothing pushed, nothing
         // popped) so the rings keep their fill level and audio resumes without
-        // an underrun.
-        // BUFFER_SILENT (or anything unexpected): write real silence AND set
-        // the flag; downstream is not required to honor the flag alone.
-        memset(reinterpret_cast<void*>(out->pBuffer), 0, bytes);
+        // an underrun. Real silence is written as well as the flag, since
+        // downstream is not required to honour the flag alone.
+        memset(reinterpret_cast<void*>(out->pBuffer), 0, outSamples * sizeof(float));
         out->u32ValidFrameCount = frames;
         out->u32BufferFlags = BUFFER_SILENT;
     }

@@ -672,6 +672,42 @@ Ce n'est pas un changement d'une ligne : accepter une sortie mono implique que
 `DspHost` distingue canaux d'entrée et de sortie. Le moteur Rust, lui, est déjà
 prêt — il somme déjà en mono en interne et ne fait que redupliquer ensuite.
 
+**Testé, et négatif également.** `Flags` passés à `0x0C` (vérifiés lus par le
+moteur : `Flags = 0xC`), conversion de canaux implémentée
+(`apo/src/ChannelMix.h`, `MixChannels`), formats d'entrée/sortie découplés dans
+`LockForProcess` et `DspHost`. Micro actif dans un Meet : **zéro ligne de log**.
+
+> ⚠️ Piège rencontré en cours de route : le catalogue APO que le moteur lit est
+> celui, **scopé au composant**, que pose l'INF — pas celui qu'écrit
+> `DllRegisterServer` sous `HKLM\Software\Classes`. Changer les `Flags` dans le
+> code C++ sans changer `APO_FLAGS` dans `kwiet_component.inf` n'a donc aucun
+> effet, et invalide silencieusement le test. Les deux doivent rester en phase.
+
+### Bilan des hypothèses testées
+
+| Hypothèse | Résultat |
+|---|---|
+| Chrome `--disable-features=WASAPIRawAudioCapture` | sans effet |
+| Retirer RAW de nos modes déclarés | sans effet (RAW vient du pilote) |
+| Implémenter le contrat AEC (3 interfaces) | interfaces acceptées, `AddAuxiliaryInput` appelé… mais en mode DEFAULT seulement |
+| `Flags` `0x0F` → `0x0C` + sortie mono possible | sans effet |
+
+### L'expérience de contrôle qui manque
+
+Toutes ces hypothèses supposent que **Voice Clarity, elle, fonctionne avec
+Meet**. Ce n'est pas vérifié. Il faut sélectionner Voice Clarity sur l'endpoint,
+rejoindre un Meet et regarder si `voiceclaritycpuapo.dll` est chargée dans
+`audiodg` :
+
+- **si oui** → un APO peut bien entrer dans ce pipe, et il reste à trouver ce
+  qui nous distingue d'elle ;
+- **si non** → Chrome contourne *tous* les APO, y compris ceux de Microsoft, et
+  toute cette piste est un cul-de-sac. La question devient alors produit :
+  couvrir les applications qui n'utilisent pas WebRTC, ou revenir au micro
+  virtuel écarté au départ.
+
+Cette expérience aurait dû venir en premier.
+
 ### Ce que ça change pour le produit
 
 `docs/architecture.md` notait depuis le début « les flux exclusive/raw

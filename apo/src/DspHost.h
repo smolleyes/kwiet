@@ -35,10 +35,12 @@ public:
     // the rings and starts the worker. Returns false if the DSP path could not
     // be brought up; the APO then stays in permanent passthrough, which is a
     // valid degraded mode, not an error.
+    // Input and output channel counts may differ: the rings carry input-width
+    // audio and ProcessRt converts on the way out.
     // `control` may be null: the DSP then runs on its built-in settings and
     // the UI simply has nothing to steer.
-    bool Start(UINT32 sampleRate, UINT32 channels, UINT32 framesPerQuantum,
-               KwietControlBlock* control);
+    bool Start(UINT32 sampleRate, UINT32 inChannels, UINT32 outChannels,
+               UINT32 framesPerQuantum, KwietControlBlock* control);
 
     // Non-RT (UnlockForProcess): stops the worker and releases everything.
     // Safe to call when not started.
@@ -95,11 +97,15 @@ private:
 
     float* m_scratchIn = nullptr;
     float* m_scratchOut = nullptr;
+    // RT-side staging, used only when the channel counts differ: the ring
+    // holds input-width frames that have to be mixed into a narrower output.
+    float* m_rtScratch = nullptr;
 
     HANDLE m_worker = nullptr;
     HANDLE m_stopEvent = nullptr;
 
-    UINT32 m_channels = 0;
+    UINT32 m_channels = 0;         // input width; what the rings carry
+    UINT32 m_outChannels = 0;
     UINT32 m_quantumFrames = 0;    // what the RT thread pushes/pops each pass
     UINT32 m_blockFrames = 0;      // what the DSP consumes per inference
     size_t m_blockSamples = 0;
