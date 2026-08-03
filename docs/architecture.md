@@ -386,6 +386,29 @@ est ce qui rend ces chiffres exploitables. Deux des trois prises à 100 dB
 touchent le plancher 16 bits (−91,0 dB), donc la suppression réelle est
 supérieure à la valeur affichée.
 
+### Test voix + bruit (le seul qui compte vraiment)
+
+Bruit rose joué dans le casque, prise de 12 s segmentée : 4 s de silence pour
+mesurer le plancher de bruit, puis 7 s de parole. Même protocole dans les deux
+états, seul le réglage d'agressivité change.
+
+| | Sans suppression | Avec DFN3 |
+|---|---|---|
+| Bruit de fond | −40,4 dB | **−91,0 dB** |
+| Voix | −30,3 dB | −32,1 dB |
+| SNR | 10,1 dB | 58,9 dB |
+
+- **bruit supprimé : ≥ 50 dB** (le plancher 16 bits est atteint, donc borné
+  par la mesure) ;
+- **voix conservée à 1,8 dB près** — dans la variation naturelle entre deux
+  prises parlées ;
+- **gain de SNR ≈ 49 dB**, `underruns=0` dans les deux états.
+
+> ⚠️ Ces chiffres mesurent des **niveaux**, pas la **qualité**. Une voix peut
+> conserver son niveau tout en étant abîmée (artefacts, sifflements,
+> pompage). Seule l'écoute tranche, et c'est ce qui doit guider le jalon 3.
+> Le protocole dépend aussi de la constance de l'élocution entre les prises.
+
 ### Changements d'ABI (v2)
 
 | Élément | Décision |
