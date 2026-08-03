@@ -720,6 +720,32 @@ depuis (le mode raw de l'endpoint vient du pilote, pas de nous). Restauré.
 > référence. Le diff systématique contre un pack qui fonctionne aurait dû venir
 > avant toute modification spéculative.
 
+**RAW restauré, vérifié enregistré (`DEFAULT | COMMS | SPEECH | RAW`), Meet en
+cours, micro à −8,1 dB : toujours zéro ligne de log.**
+
+L'enregistrement est donc désormais fonctionnellement identique à celui de
+Voice Clarity, et pourtant elle entre dans le pipe et nous non. **La cause
+n'est plus déclarative.** Il reste deux explications :
+
+1. **Le comportement de la DLL.** À chaque instanciation, `audiodg` nous
+   interroge et nous refusons trois interfaces :
+   - `{F235855F-...}` `IApoAcousticEchoCancellation2` — Voice Clarity
+     l'implémente très probablement. Son unique méthode
+     `GetDesiredReferenceStreamProperties` demande la structure
+     `APO_REFERENCE_STREAM_PROPERTIES`, absente du header vendored : il faut la
+     récupérer d'un SDK ≥ 22000.
+   - `{69E1F79F-6EAE-4517-BE9F-13AA90E30014}` — **non identifiée**, demandée
+     systématiquement depuis le jalon 1, jamais élucidée. À chercher en
+     priorité : c'est la seule inconnue franche du dossier.
+   - `{B1176E34-...}` `IAudioSystemEffectsCustomFormats`.
+
+2. **Le niveau de confiance.** Voice Clarity est signée par Microsoft ; nous
+   utilisons un certificat de test auto-signé. Le rôle d'annuleur d'écho du
+   pipe communications exige peut-être une signature d'attestation, là où le
+   pipe DEFAULT se contente d'un package accepté par `pnputil`. Hypothèse
+   coûteuse à tester (il faut un vrai certificat), mais elle expliquerait
+   l'ensemble des observations.
+
 ### L'expérience de contrôle qui manquait
 
 Toutes ces hypothèses supposent que **Voice Clarity, elle, fonctionne avec
