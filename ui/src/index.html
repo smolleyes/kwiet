@@ -8,39 +8,51 @@
   </head>
   <body>
     <header class="bar" data-tauri-drag-region>
-      <span class="wordmark" data-tauri-drag-region>KWIET</span>
+      <span class="brand" data-tauri-drag-region>
+        <img class="brand-mark" src="mark.svg" alt="" width="18" height="18" />
+        <span class="wordmark" data-tauri-drag-region>KWIET</span>
+      </span>
       <span class="state" id="state">
-        <i class="dot" id="dot"></i><span id="stateText">connexion…</span>
+        <i class="dot" id="dot"></i><span id="stateText">…</span>
       </span>
     </header>
 
     <main>
       <!-- Signature: the gap between the two envelopes is what Kwiet removes. -->
-      <section class="scope" aria-label="Historique du signal">
+      <section class="scope" aria-label="Signal">
         <canvas id="scope" width="656" height="240"></canvas>
         <div class="scope-idle" id="scopeIdle" hidden>
-          <p class="idle-title" id="idleTitle">Aucun micro actif</p>
-          <p class="idle-body" id="idleBody">
-            Ouvre une application qui écoute ton micro pour voir le signal.
-          </p>
-          <button type="button" class="idle-action" id="idleAction" hidden>
-            Ouvrir les paramètres du son
-          </button>
+          <p class="idle-title" id="idleTitle"></p>
+          <p class="idle-body" id="idleBody"></p>
+          <button type="button" class="idle-action" id="idleAction" data-i18n="idle.action" hidden></button>
         </div>
         <div class="legend">
-          <span class="key key-removed">bruit retiré</span>
-          <span class="key key-kept">voix conservée</span>
+          <span class="key key-removed" data-i18n="legend.removed"></span>
+          <span class="key key-kept" data-i18n="legend.kept"></span>
         </div>
       </section>
 
-      <section class="readout">
-        <p class="eyebrow">Retiré à l'instant</p>
-        <p class="figure"><span id="removed">—</span><span class="unit">dB</span></p>
+      <section class="meter">
+        <div class="meter-head">
+          <p class="eyebrow" data-i18n="meter.label"></p>
+          <output class="meter-value" id="meterValue">—</output>
+        </div>
+        <!-- One bar, two readings: the bright fill is what apps receive, the
+             amber sticking out past it is what Kwiet took away. -->
+        <div class="meter-track" id="meterTrack">
+          <div class="meter-noise" id="meterNoise"></div>
+          <div class="meter-fill" id="meterFill"></div>
+          <div class="meter-peak" id="meterPeak"></div>
+        </div>
+        <div class="meter-scale" aria-hidden="true">
+          <span>−60</span><span>−40</span><span>−20</span><span>−6</span><span>0</span>
+        </div>
+        <p class="meter-removed" id="meterRemoved"></p>
       </section>
 
       <section class="control">
         <div class="control-head">
-          <label class="eyebrow" for="aggressiveness">Intensité</label>
+          <label class="eyebrow" for="aggressiveness" data-i18n="control.label"></label>
           <output class="value" id="aggressivenessValue">50 dB</output>
         </div>
         <input
@@ -53,19 +65,16 @@
           aria-describedby="aggressivenessHint"
         />
         <div class="scale">
-          <span>discrète</span>
-          <span>maximale</span>
+          <span data-i18n="control.low"></span>
+          <span data-i18n="control.high"></span>
         </div>
-        <p class="hint" id="aggressivenessHint">
-          Plus haut, le silence devient total mais les débuts de mots peuvent
-          être rabotés.
-        </p>
+        <p class="hint" id="aggressivenessHint" data-i18n="control.hint"></p>
       </section>
 
       <section class="toggle-row">
         <div>
-          <p class="toggle-label">Nettoyage du micro</p>
-          <p class="toggle-sub" id="toggleSub">Actif sur toutes les applications</p>
+          <p class="toggle-label" data-i18n="toggle.label"></p>
+          <p class="toggle-sub" id="toggleSub"></p>
         </div>
         <button
           type="button"
@@ -73,15 +82,20 @@
           id="enabled"
           role="switch"
           aria-checked="true"
-          aria-label="Nettoyage du micro"
         >
           <span class="knob"></span>
         </button>
       </section>
     </main>
 
-    <footer class="status" id="status">—</footer>
+    <footer class="foot">
+      <span class="status" id="status">—</span>
+      <span class="lang" id="lang" role="group" aria-label="Langue / Language">
+        <button type="button" data-lang="fr">FR</button>
+        <button type="button" data-lang="en">EN</button>
+      </span>
+    </footer>
 
-    <script src="main.js"></script>
+    <script type="module" src="main.js"></script>
   </body>
 </html>

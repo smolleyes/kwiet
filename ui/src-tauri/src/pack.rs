@@ -48,6 +48,10 @@ const DEVICE_STATE_ACTIVE: u32 = 1;
 #[derive(Serialize, Clone, PartialEq, Eq, Default, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct PackStatus {
+    /// False until the first sweep answers. Without it the panel would spend its
+    /// first seconds announcing that the pack is missing, because "not yet
+    /// looked" and "not installed" would otherwise be the same value.
+    pub known: bool,
     /// The driver package is present on this machine.
     pub installed: bool,
     /// Kwiet is selected on the microphone Windows hands to applications.
@@ -119,6 +123,7 @@ fn endpoint_key_name(device_id: &str) -> Option<&str> {
 
 pub fn status() -> PackStatus {
     let mut status = PackStatus {
+        known: true,
         installed: pack_installed(),
         ..Default::default()
     };

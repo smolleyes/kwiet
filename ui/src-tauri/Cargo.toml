@@ -27,6 +27,8 @@ features = [
     # Opening the Settings page where the effect pack is chosen.
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
+    # Picking French or English on first run.
+    "Win32_Globalization",
 ]
 
 [profile.release]

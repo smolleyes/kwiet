@@ -314,6 +314,9 @@ render("mark-full-tile.svg", join(ICONS, "128x128.png"), 128);
 render("mark-full-tile.svg", join(ICONS, "128x128@2x.png"), 256);
 render("mark-full-tile.svg", join(ICONS, "icon.png"), 512);
 
+// The panel's header shows the mark at 18 px, where the splinters are mud.
+writeFileSync(join(HERE, "..", "ui", "src", "mark.svg"), mark({ cut: "micro" }));
+
 // For the README, the docs, and anywhere a PNG is easier than an SVG.
 render("mark-full.svg", join(PNG, "mark-1024.png"), 1024);
 render("mark-full-tile.svg", join(PNG, "mark-tile-1024.png"), 1024);

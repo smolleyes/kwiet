@@ -57,6 +57,16 @@ body {
   cursor: default;
 }
 
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.brand-mark {
+  display: block;
+}
+
 .wordmark {
   font-family: var(--font-label);
   font-variation-settings: "wght" 600, "wdth" 87;
@@ -243,34 +253,102 @@ section {
   background: var(--kept);
 }
 
-/* ---------- readout ---------- */
+/* ---------- meter ---------- */
 
-.readout {
-  padding-top: 4px;
-  padding-bottom: 16px;
+.meter {
+  padding-top: 6px;
+  padding-bottom: 14px;
   border-bottom: 1px solid var(--rule);
 }
 
-.figure {
-  margin: 4px 0 0;
+.meter-head {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  justify-content: space-between;
+}
+
+.meter-value {
   font-family: var(--font-num);
-  font-size: 40px;
-  line-height: 1;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.meter-value.quiet {
+  color: var(--ink-faint);
+}
+
+.meter-track {
+  position: relative;
+  height: 14px;
+  margin: 9px 0 5px;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+/* Everything the microphone heard. Whatever the bright fill does not cover is
+   exactly what Kwiet removed -- the same story the scope tells, in one bar. */
+.meter-noise {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--noise, 0%);
+  background: var(--removed-dim);
+  transition: width 60ms linear;
+}
+
+/* Full width, then clipped: the colours have to stay pinned to their dB
+   positions. A gradient sized to the fill would drag red down to a whisper. */
+.meter-fill {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    #6ec79b 0 68%,
+    var(--removed) 76% 88%,
+    #e0685a 95% 100%
+  );
+  clip-path: inset(0 calc(100% - var(--level, 0%)) 0 0);
+  transition: clip-path 60ms linear;
+}
+
+/* Peak hold: the loudest moment of the last second, so a transient that is over
+   before the eye catches it still leaves a mark. */
+.meter-peak {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--peak, 0%);
+  width: 2px;
+  margin-left: -1px;
+  background: var(--ink);
+  opacity: 0.8;
+  transition: left 120ms linear;
+}
+
+.meter-peak[hidden] {
+  display: none;
+}
+
+.meter-scale {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-num);
+  font-size: 9.5px;
+  color: var(--ink-faint);
+}
+
+.meter-removed {
+  margin: 9px 0 0;
+  font-family: var(--font-num);
+  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
   color: var(--removed);
-  transition: color 300ms ease;
 }
 
-.figure.quiet {
-  color: var(--ink-faint);
-}
-
-.unit {
-  font-size: 14px;
-  color: var(--ink-faint);
+.meter-removed:empty {
+  display: none;
 }
 
 /* ---------- slider ---------- */

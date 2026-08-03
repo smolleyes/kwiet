@@ -79,11 +79,7 @@ fn peak_to_db(peak: i32) -> f64 {
     db.max(METER_FLOOR_DB)
 }
 
-/// Live mapping of the control block.
-///
-/// Holding the section open has a useful side effect: it keeps the settings
-/// alive between streams, because the APO's next `CreateFileMapping` reuses the
-/// same section instead of making a fresh, zeroed one.
+/// A mapping of the control block, held only for the duration of one operation.
 pub struct Control {
     handle: HANDLE,
     block: *mut ControlBlock,
@@ -185,24 +181,28 @@ impl Drop for Control {
     }
 }
 
-/// Keeps the mapping across calls and reopens it when a stream comes back.
+/// Opens the block for each operation instead of holding it open.
+///
+/// Keeping the mapping alive looked like a free way to carry the user's
+/// settings across streams, since the APO's next `CreateFileMapping` would find
+/// the section and leave it as it was. It cost correctness. A named section
+/// lives as long as *any* handle to it, so whenever audiodg tore the APO down
+/// without calling `UnlockForProcess` -- which is what happens when the pack is
+/// deselected in Settings -- the block stayed mapped with `streaming` still set,
+/// and the panel went on reporting a stream that had ended: full status line,
+/// no signal, and the overlay that should have said why hidden behind it.
+///
+/// Opening per call makes the section's existence mean exactly what the panel
+/// reads it to mean: the APO is loaded and holding it. The settings that used to
+/// ride along are re-pushed by the watcher thread as soon as it sees a new
+/// generation, so nothing is lost but a few hundred milliseconds at the APO's
+/// defaults when a stream starts.
 #[derive(Default)]
-pub struct ControlHandle {
-    control: Option<Control>,
-}
+pub struct ControlHandle;
 
 impl ControlHandle {
-    /// Returns the live block, opening it if a stream has appeared since the
-    /// last call.
-    fn get(&mut self) -> Option<&Control> {
-        if self.control.is_none() {
-            self.control = Control::open();
-        }
-        self.control.as_ref()
-    }
-
     pub fn snapshot(&mut self) -> Snapshot {
-        match self.get() {
+        match Control::open() {
             Some(control) => control.snapshot(),
             None => Snapshot {
                 aggressiveness_db: AGGRESSIVENESS_DEFAULT_DB,
@@ -213,13 +213,13 @@ impl ControlHandle {
     }
 
     pub fn set_enabled(&mut self, enabled: bool) {
-        if let Some(control) = self.get() {
+        if let Some(control) = Control::open() {
             control.set_enabled(enabled);
         }
     }
 
     pub fn set_aggressiveness(&mut self, db: f64) {
-        if let Some(control) = self.get() {
+        if let Some(control) = Control::open() {
             control.set_aggressiveness(db);
         }
     }

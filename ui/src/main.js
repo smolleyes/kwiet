@@ -1,10 +1,12 @@
 /* Kwiet panel logic.
  *
- * The scope is the point of this UI: it draws the last few seconds of the
- * microphone as two stacked envelopes. The celadon area is what reaches your
- * apps; the amber above it is what Kwiet took out. When you stop talking the
- * amber stays and the celadon collapses — that gap is the product.
+ * Two readings of the same microphone, everywhere. The scope draws the last few
+ * seconds as stacked envelopes; the meter shows the same instant as one bar.
+ * In both, celadon is what reaches your apps and amber is what Kwiet took out,
+ * so the gap between them is the product.
  */
+
+import { applyStaticStrings, detectLanguage, language, setLanguage, t } from "./i18n.js";
 
 const invoke = window.__TAURI__.core.invoke;
 
@@ -14,6 +16,10 @@ const POLL_MS = 40;
 /** The pack only changes when somebody visits Windows settings. */
 const PACK_POLL_MS = 1000;
 
+/** Peak hold, so a transient that is over before the eye catches it still shows. */
+const PEAK_HOLD_MS = 900;
+const PEAK_FALL_DB_PER_S = 26;
+
 const el = {
   scope: document.getElementById("scope"),
   scopeIdle: document.getElementById("scopeIdle"),
@@ -22,27 +28,34 @@ const el = {
   idleAction: document.getElementById("idleAction"),
   dot: document.getElementById("dot"),
   stateText: document.getElementById("stateText"),
-  removed: document.getElementById("removed"),
-  figure: document.querySelector(".figure"),
+  meterValue: document.getElementById("meterValue"),
+  meterNoise: document.getElementById("meterNoise"),
+  meterFill: document.getElementById("meterFill"),
+  meterPeak: document.getElementById("meterPeak"),
+  meterRemoved: document.getElementById("meterRemoved"),
   slider: document.getElementById("aggressiveness"),
   sliderValue: document.getElementById("aggressivenessValue"),
   toggle: document.getElementById("enabled"),
   toggleSub: document.getElementById("toggleSub"),
   status: document.getElementById("status"),
+  lang: document.getElementById("lang"),
 };
 
 const ctx = el.scope.getContext("2d");
 const history = [];
 /** Last known effect-pack state; null until the first poll answers. */
 let pack = null;
-/** Smoothed figure, so the readout does not flicker on every frame. */
+/** Smoothed, so the readout does not flicker on every frame. */
 let removedSmoothed = 0;
+let peakDb = FLOOR_DB;
+let peakHeldUntil = 0;
 /** Set while dragging, so polling does not fight the user's hand. */
 let sliderHeld = false;
 
 const clamp01 = (v) => Math.max(0, Math.min(1, v));
 /** dB to 0..1 across the meter's range. */
 const norm = (db) => clamp01((db - FLOOR_DB) / -FLOOR_DB);
+const pct = (db) => `${(norm(db) * 100).toFixed(1)}%`;
 
 function resizeScope() {
   const ratio = window.devicePixelRatio || 1;
@@ -108,7 +121,7 @@ function drawScope() {
 }
 
 /** The microphone's name, or a neutral stand-in when Windows gives none. */
-const micName = (name) => (name ? `« ${name} »` : "ton micro");
+const micName = (name) => (name ? `« ${name} »` : t("idle.thisMic"));
 
 /**
  * What to say over the scope when no signal is coming through.
@@ -120,36 +133,53 @@ const micName = (name) => (name ? `« ${name} »` : "ton micro");
  * audio stack ever mentions it.
  */
 function idleState() {
-  if (!pack) {
-    return {
-      title: "Aucun micro actif",
-      body: "Ouvre une application qui écoute ton micro pour voir le signal.",
-    };
-  }
-  if (!pack.installed) {
-    return {
-      title: "Pack d'effets absent",
-      body: "Windows n'a pas le pack Kwiet. Réinstalle Kwiet, puis choisis-le dans les paramètres du micro.",
-    };
-  }
+  if (!pack || !pack.known) return { key: "noStream" };
+  if (!pack.installed) return { key: "notInstalled" };
   if (!pack.selectedOnDefault && pack.selectedElsewhere.length > 0) {
     return {
-      title: "Choisi sur le mauvais micro",
-      body: `Kwiet est en place sur « ${pack.selectedElsewhere[0]} », mais les applications reçoivent ${micName(pack.defaultDevice)}.`,
+      key: "wrongMic",
+      vars: { other: pack.selectedElsewhere[0], mic: micName(pack.defaultDevice) },
       action: true,
     };
   }
   if (!pack.selectedOnDefault) {
-    return {
-      title: "Kwiet n'est pas encore choisi",
-      body: `Le pack est installé, mais Windows ne s'en sert pas. Ouvre ${micName(pack.defaultDevice)} dans les paramètres du son, puis choisis Kwiet sous « Améliorations audio ».`,
-      action: true,
-    };
+    return { key: "notSelected", vars: { mic: micName(pack.defaultDevice) }, action: true };
   }
-  return {
-    title: "Aucune application n'utilise le micro",
-    body: `Kwiet est en place sur ${micName(pack.defaultDevice)} et attend. Ouvre une application qui écoute le micro.`,
-  };
+  return { key: "waiting", vars: { mic: micName(pack.defaultDevice) } };
+}
+
+function renderMeter(s, live) {
+  const filtering = live && s.enabled && s.dspActive;
+  const outDb = live ? s.levelOutDb : FLOOR_DB;
+  const inDb = live ? s.levelInDb : FLOOR_DB;
+
+  const now = performance.now();
+  if (outDb >= peakDb) {
+    peakDb = outDb;
+    peakHeldUntil = now + PEAK_HOLD_MS;
+  } else if (now > peakHeldUntil) {
+    peakDb = Math.max(FLOOR_DB, peakDb - (PEAK_FALL_DB_PER_S * POLL_MS) / 1000);
+  }
+
+  el.meterFill.style.setProperty("--level", pct(outDb));
+  el.meterNoise.style.setProperty("--noise", pct(inDb));
+  el.meterPeak.style.setProperty("--peak", pct(peakDb));
+  el.meterPeak.hidden = peakDb <= FLOOR_DB;
+
+  const silent = outDb <= FLOOR_DB;
+  el.meterValue.textContent = silent ? "—" : `${outDb.toFixed(1)} dB`;
+  el.meterValue.classList.toggle("quiet", silent);
+
+  // Only meaningful while the DSP is really filtering.
+  if (filtering) {
+    const instant = Math.max(0, s.levelInDb - s.levelOutDb);
+    removedSmoothed += (instant - removedSmoothed) * 0.2;
+    el.meterRemoved.textContent =
+      removedSmoothed < 0.5 ? "" : t("meter.removed", { db: removedSmoothed.toFixed(1) });
+  } else {
+    removedSmoothed = 0;
+    el.meterRemoved.textContent = "";
+  }
 }
 
 function renderState(s) {
@@ -158,64 +188,53 @@ function renderState(s) {
 
   const idle = live ? null : idleState();
   if (idle) {
-    el.idleTitle.textContent = idle.title;
-    el.idleBody.textContent = idle.body;
+    el.idleTitle.textContent = t(`idle.${idle.key}.title`);
+    el.idleBody.textContent = t(`idle.${idle.key}.body`, idle.vars);
     el.idleAction.hidden = !idle.action;
     el.scopeIdle.classList.toggle("needs-action", Boolean(idle.action));
   }
 
   el.dot.className = "dot";
   if (!live) {
-    if (idle.action) {
-      el.dot.classList.add("bypass");
-      el.stateText.textContent = "non configuré";
-    } else {
-      el.stateText.textContent = "en veille";
-    }
+    el.dot.classList.toggle("bypass", Boolean(idle.action));
+    el.stateText.textContent = t(idle.action ? "state.unconfigured" : "state.idle");
   } else if (!s.enabled) {
     el.dot.classList.add("bypass");
-    el.stateText.textContent = "contourné";
+    el.stateText.textContent = t("state.bypassed");
   } else if (!s.dspActive) {
     el.dot.classList.add("bypass");
-    el.stateText.textContent = "sans filtrage";
+    el.stateText.textContent = t("state.unfiltered");
   } else {
     el.dot.classList.add("live");
-    el.stateText.textContent = "nettoyage actif";
+    el.stateText.textContent = t("state.live");
   }
 
   el.toggle.setAttribute("aria-checked", String(s.enabled));
-  el.toggleSub.textContent = s.enabled
-    ? "Actif sur toutes les applications"
-    : "Le micro passe sans traitement";
+  el.toggleSub.textContent = t(s.enabled ? "toggle.on" : "toggle.off");
 
   if (!sliderHeld) {
     el.slider.value = String(Math.round(s.aggressivenessDb));
     updateSliderChrome();
   }
 
-  // The readout only means something while the DSP is really filtering.
-  if (live && s.enabled && s.dspActive) {
-    const instant = Math.max(0, s.levelInDb - s.levelOutDb);
-    removedSmoothed += (instant - removedSmoothed) * 0.2;
-    el.removed.textContent = removedSmoothed.toFixed(1);
-    el.figure.classList.toggle("quiet", removedSmoothed < 0.5);
-  } else {
-    removedSmoothed = 0;
-    el.removed.textContent = "—";
-    el.figure.classList.add("quiet");
-  }
+  renderMeter(s, live);
 
   const fault = s.underruns > 0 || s.dspErrors > 0;
   el.status.classList.toggle("fault", fault);
   if (!s.present) {
-    el.status.textContent = "aucun flux de capture";
+    el.status.textContent = t("status.noStream");
   } else {
     const bits = [
       `${(s.sampleRate / 1000).toFixed(1)} kHz`,
       `${s.channels} ch`,
-      `${s.latencyMs.toFixed(0)} ms de retard`,
+      t("status.latency", { ms: s.latencyMs.toFixed(0) }),
     ];
-    if (fault) bits.push(`${s.underruns} décrochages`, `${s.dspErrors} erreurs`);
+    if (fault) {
+      bits.push(
+        t("status.underruns", { n: s.underruns }),
+        t("status.errors", { n: s.dspErrors }),
+      );
+    }
     el.status.textContent = bits.join("  ·  ");
   }
 }
@@ -253,6 +272,20 @@ async function pollPack() {
   }
 }
 
+function applyLanguage(lang) {
+  const chosen = setLanguage(lang);
+  for (const button of el.lang.querySelectorAll("button")) {
+    button.setAttribute("aria-pressed", String(button.dataset.lang === chosen));
+  }
+}
+
+el.lang.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-lang]");
+  if (!button) return;
+  applyLanguage(button.dataset.lang);
+  invoke("set_language", { language: button.dataset.lang });
+});
+
 el.idleAction.addEventListener("click", () => {
   invoke("open_microphone_settings");
 });
@@ -279,9 +312,22 @@ window.addEventListener("resize", () => {
   drawScope();
 });
 
-resizeScope();
-updateSliderChrome();
-pollPack();
-tick();
-setInterval(tick, POLL_MS);
-setInterval(pollPack, PACK_POLL_MS);
+async function start() {
+  let saved = null;
+  try {
+    saved = await invoke("language");
+  } catch {
+    // First run, or an older build: fall back to the system language.
+  }
+  applyLanguage(saved ?? detectLanguage());
+  applyStaticStrings();
+
+  resizeScope();
+  updateSliderChrome();
+  await pollPack();
+  await tick();
+  setInterval(tick, POLL_MS);
+  setInterval(pollPack, PACK_POLL_MS);
+}
+
+start();

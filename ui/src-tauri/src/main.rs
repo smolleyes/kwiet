@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod control;
+mod i18n;
 mod pack;
 mod settings;
 
@@ -60,6 +61,39 @@ fn open_microphone_settings() {
             SW_SHOWNORMAL,
         );
     }
+}
+
+/// The panel asks for this before its first paint, so it can start in the right
+/// language instead of flashing one and settling on the other.
+#[tauri::command]
+fn language(state: State<'_, AppState>) -> String {
+    let preference = state.settings.lock().expect("settings lock").language.clone();
+    i18n::resolve(preference.as_deref())
+}
+
+#[tauri::command]
+fn set_language(app: tauri::AppHandle, state: State<'_, AppState>, language: String) {
+    let chosen = i18n::resolve(Some(&language));
+    {
+        let mut settings = state.settings.lock().expect("settings lock");
+        settings.language = Some(chosen.clone());
+        settings.save();
+    }
+    // The tray is outside the web view, so it has to be relabelled by hand.
+    if let Some(tray) = app.tray_by_id("kwiet") {
+        if let Ok(menu) = build_tray_menu(&app, &chosen) {
+            let _ = tray.set_menu(Some(menu));
+        }
+        let _ = tray.set_tooltip(Some(i18n::strings(&chosen).tooltip));
+    }
+}
+
+fn build_tray_menu(app: &tauri::AppHandle, language: &str) -> tauri::Result<Menu<tauri::Wry>> {
+    let strings = i18n::strings(language);
+    let show = MenuItem::with_id(app, "show", strings.open, true, None::<&str>)?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let quit = MenuItem::with_id(app, "quit", strings.quit, true, None::<&str>)?;
+    Menu::with_items(app, &[&show, &separator, &quit])
 }
 
 #[tauri::command]
@@ -134,7 +168,7 @@ fn main() {
                         let state: State<'_, AppState> = handle.state();
                         let snap = state.control.lock().expect("control lock").snapshot();
                         if snap.present && snap.generation != pushed_generation {
-                            let settings = *state.settings.lock().expect("settings lock");
+                            let settings = state.settings.lock().expect("settings lock").clone();
                             let mut control = state.control.lock().expect("control lock");
                             control.set_enabled(settings.enabled);
                             control.set_aggressiveness(settings.aggressiveness_db);
@@ -148,10 +182,12 @@ fn main() {
                 }
             });
 
-            let show = MenuItem::with_id(app, "show", "Ouvrir Kwiet", true, None::<&str>)?;
-            let separator = PredefinedMenuItem::separator(app)?;
-            let quit = MenuItem::with_id(app, "quit", "Quitter", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &separator, &quit])?;
+            let language = {
+                let state: State<'_, AppState> = app.state();
+                let preference = state.settings.lock().expect("settings lock").language.clone();
+                i18n::resolve(preference.as_deref())
+            };
+            let menu = build_tray_menu(app.handle(), &language)?;
 
             // A dedicated tray cut: transparent, and drawn without the splinter
             // field, which turns to mud below 24 px. The window icon keeps its
@@ -160,7 +196,7 @@ fn main() {
 
             TrayIconBuilder::with_id("kwiet")
                 .icon(tray_icon)
-                .tooltip("Kwiet — nettoyage du micro")
+                .tooltip(i18n::strings(&language).tooltip)
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
@@ -194,6 +230,8 @@ fn main() {
             snapshot,
             pack_status,
             open_microphone_settings,
+            language,
+            set_language,
             set_enabled,
             set_aggressiveness
         ])

@@ -15,11 +15,13 @@ use crate::control::{AGGRESSIVENESS_DEFAULT_DB, AGGRESSIVENESS_MAX_DB, AGGRESSIV
 /// Resolved once at startup so `save` needs nothing but `&self`.
 static PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub enabled: bool,
     pub aggressiveness_db: f64,
+    /// None means "follow Windows", which is what a first run should do.
+    pub language: Option<String>,
 }
 
 impl Default for Settings {
@@ -27,6 +29,7 @@ impl Default for Settings {
         Self {
             enabled: true,
             aggressiveness_db: AGGRESSIVENESS_DEFAULT_DB,
+            language: None,
         }
     }
 }
