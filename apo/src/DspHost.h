@@ -68,6 +68,7 @@ private:
     using AbiVersionFn = decltype(&kwiet_dsp_abi_version);
     using CreateFn = decltype(&kwiet_dsp_create);
     using DestroyFn = decltype(&kwiet_dsp_destroy);
+    using BlockFramesFn = decltype(&kwiet_dsp_block_frames);
     using ProcessFn = decltype(&kwiet_dsp_process);
     using SetAttenuationFn = decltype(&kwiet_dsp_set_attenuation_db);
 
@@ -79,6 +80,7 @@ private:
     AbiVersionFn m_abiVersion = nullptr;
     CreateFn m_create = nullptr;
     DestroyFn m_destroy = nullptr;
+    BlockFramesFn m_blockFramesFn = nullptr;
     ProcessFn m_process = nullptr;
     SetAttenuationFn m_setAttenuation = nullptr;
 
@@ -94,7 +96,8 @@ private:
     HANDLE m_stopEvent = nullptr;
 
     UINT32 m_channels = 0;
-    UINT32 m_blockFrames = 0;      // worker block size, one engine quantum
+    UINT32 m_quantumFrames = 0;    // what the RT thread pushes/pops each pass
+    UINT32 m_blockFrames = 0;      // what the DSP consumes per inference
     size_t m_blockSamples = 0;
     UINT32 m_latencyFrames = 0;
 

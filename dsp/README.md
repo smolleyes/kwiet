@@ -31,14 +31,31 @@ int32_t   kwiet_dsp_process(KwietDsp*, const float* in, float* out, uint32_t fra
 void      kwiet_dsp_set_attenuation_db(KwietDsp*, float db);        // thread-safe, atomic
 ```
 
-## Étape suivante : DeepFilterNet3
+## Dépendance DeepFilterNet3 — épinglages obligatoires
 
-Remplacer l'atténuation par un wrapper de la crate `df`, en gardant l'ABI
-inchangée. Points à trancher à ce moment-là :
+Le crate publié sur crates.io (`deep_filter` 0.2.5, 2022) est encore DFN2 : on
+dépend donc du dépôt Git. Deux épinglages sont nécessaires pour que ça
+compile, tous deux commentés dans `Cargo.toml` :
 
-- vérifier que `process` **n'alloue pas après warmup** (préchauffer, ou
-  wrapper si la crate alloue) — c'est la contrainte structurante ;
-- DFN3 attend du **48 kHz mono** : gérer le resampling et le downmix depuis le
-  format négocié (`sample_rate()` est déjà conservé pour ça) ;
-- le lookahead de DFN3 s'ajoute aux 30 ms du ring — vérifier qu'on reste dans
-  le budget 40-60 ms.
+- **famille `tract` en `=0.21.4`** — `deep_filter` déclare `^0.21.4`, mais
+  `tract` a renommé un champ public (`symbol_table` → `symbols`) dans une
+  version que cargo juge compatible. Résolu en 0.21.17, `deep_filter` ne
+  compile plus. L'épinglage doit être fait **dans le manifeste** :
+  `cargo update --precise` rétrograde crate par crate et casse la cohérence
+  interne de la famille (`tract-pulse-opl` exige `=` sa propre version) ;
+- **`kstring` en `2.0.2`** — la 2.0.4 exige rustc 1.96.
+
+Modèle : `DfParams::default()` embarque `DeepFilterNet3_onnx.tar.gz` (7,6 Mo)
+dans la DLL via la feature `default-model`. Aucun fichier à déployer à côté.
+
+## Contraintes DFN3
+
+- **48 kHz uniquement** : `kwiet_dsp_create` renvoie `NULL` pour tout autre
+  taux, l'hôte reste alors en passthrough. Le resampling reste à faire.
+- **Mono** : les canaux de l'hôte sont sommés en entrée, et le résultat mono
+  est réécrit sur tous les canaux.
+- **Trame fixe** de `kwiet_dsp_block_frames()` (480 = 10 ms) : l'hôte utilise
+  cette valeur comme taille de bloc de son worker, les rings découplant ça du
+  quantum de l'APO.
+- `process` **alloue** (tract alloue par inférence). C'est acceptable parce
+  qu'il tourne sur le worker, jamais sur le thread temps-réel.

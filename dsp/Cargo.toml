@@ -11,6 +11,24 @@ publish = false
 name = "kwiet_dsp"
 crate-type = ["cdylib"]
 
+[dependencies]
+# DeepFilterNet3. La version publiée sur crates.io (0.2.5, 2022) est encore
+# DFN2 : on prend donc le dépôt. `tract` = inférence ONNX, `default-model` =
+# modèle DFN3 embarqué (7,6 Mo) exposé par DfParams::default().
+deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet", default-features = false, features = ["tract", "default-model"] }
+ndarray = "0.15"
+
+# Épinglage de la famille tract. deep_filter déclare "^0.21.4", mais tract a
+# renommé un champ public (`symbol_table` -> `symbols`) dans une version que
+# cargo considère compatible : résolu en 0.21.17, deep_filter ne compile plus.
+# On force donc la résolution ici, au niveau du manifeste — `cargo update
+# --precise` ne suffit pas, il downgrade crate par crate et casse la cohérence
+# de la famille. Ces dépendances ne sont pas utilisées directement.
+tract-core = "=0.21.4"
+tract-hir = "=0.21.4"
+tract-onnx = "=0.21.4"
+tract-pulse = "=0.21.4"
+
 [profile.release]
 opt-level = 3
 lto = true

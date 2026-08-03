@@ -25,6 +25,9 @@ constexpr DWORD kWorkerPollMs = 2;
 #if defined(KWIET_DEV_LOG)
 // Dev-only override so the DSP can be A/B tested without rebuilding:
 //   HKLM\SOFTWARE\Kwiet : AttenuationDbTenths (REG_DWORD, signed, tenths of dB)
+// Since ABI v2 the value is DeepFilterNet's MAXIMUM NOISE ATTENUATION, not a
+// gain: 0 = no suppression at all, 1000 (100 dB) = suppress freely. Absent
+// means "leave the engine default" (100 dB).
 // Read once per stream from LockForProcess, never from the RT path. The real
 // control plane is the shared memory block of milestone 4.
 bool ReadDevAttenuationDb(float* outDb)
@@ -84,13 +87,15 @@ bool DspHost::LoadLibraryFromModuleDir()
         reinterpret_cast<void*>(GetProcAddress(m_dspModule, "kwiet_dsp_create")));
     m_destroy = reinterpret_cast<DestroyFn>(
         reinterpret_cast<void*>(GetProcAddress(m_dspModule, "kwiet_dsp_destroy")));
+    m_blockFramesFn = reinterpret_cast<BlockFramesFn>(
+        reinterpret_cast<void*>(GetProcAddress(m_dspModule, "kwiet_dsp_block_frames")));
     m_process = reinterpret_cast<ProcessFn>(
         reinterpret_cast<void*>(GetProcAddress(m_dspModule, "kwiet_dsp_process")));
     m_setAttenuation = reinterpret_cast<SetAttenuationFn>(
         reinterpret_cast<void*>(GetProcAddress(m_dspModule, "kwiet_dsp_set_attenuation_db")));
 
     if (m_abiVersion == nullptr || m_create == nullptr || m_destroy == nullptr
-        || m_process == nullptr || m_setAttenuation == nullptr) {
+        || m_blockFramesFn == nullptr || m_process == nullptr || m_setAttenuation == nullptr) {
         KWIET_LOG("DspHost: missing export in kwiet_dsp.dll");
         return false;
     }
@@ -111,9 +116,7 @@ bool DspHost::Start(UINT32 sampleRate, UINT32 channels, UINT32 framesPerQuantum)
     }
 
     m_channels = channels;
-    m_blockFrames = framesPerQuantum;
-    m_blockSamples = static_cast<size_t>(framesPerQuantum) * channels;
-    m_latencyFrames = framesPerQuantum * kLatencyQuanta;
+    m_quantumFrames = framesPerQuantum;
 
     if (!LoadLibraryFromModuleDir()) {
         Stop();
@@ -122,12 +125,31 @@ bool DspHost::Start(UINT32 sampleRate, UINT32 channels, UINT32 framesPerQuantum)
 
     m_engine = m_create(sampleRate, channels);
     if (m_engine == nullptr) {
+        // Most often an unsupported rate: DeepFilterNet3 is 48 kHz only.
         KWIET_LOG("DspHost: kwiet_dsp_create returned null (%u Hz, %u ch)", sampleRate, channels);
         Stop();
         return false;
     }
 
-    const size_t ringSamples = m_blockSamples * (kLatencyQuanta + kHeadroomQuanta);
+    // The DSP dictates its own block size (one inference), which the rings
+    // decouple from the APO quantum -- that is exactly what they are for.
+    m_blockFrames = m_blockFramesFn(m_engine);
+    if (m_blockFrames == 0) {
+        KWIET_LOG("DspHost: kwiet_dsp_block_frames returned 0");
+        Stop();
+        return false;
+    }
+    m_blockSamples = static_cast<size_t>(m_blockFrames) * channels;
+
+    // Enough buffered audio for the RT thread to always find a quantum, and
+    // for the worker to always find a whole block.
+    const UINT32 byQuantum = framesPerQuantum * kLatencyQuanta;
+    const UINT32 byBlock = m_blockFrames * 2;
+    m_latencyFrames = byQuantum > byBlock ? byQuantum : byBlock;
+
+    const size_t ringSamples =
+        (static_cast<size_t>(m_latencyFrames) + framesPerQuantum * kHeadroomQuanta + m_blockFrames)
+        * channels;
     if (!m_inRing.Init(ringSamples) || !m_outRing.Init(ringSamples)) {
         KWIET_LOG("DspHost: ring allocation failed");
         Stop();
@@ -174,8 +196,8 @@ bool DspHost::Start(UINT32 sampleRate, UINT32 channels, UINT32 framesPerQuantum)
     // Release: everything above must be visible to the RT thread before it
     // sees m_active.
     m_active.store(true, std::memory_order_release);
-    KWIET_LOG("DspHost: started, %u Hz, %u ch, block=%u frames, latency=%u frames",
-              sampleRate, channels, m_blockFrames, m_latencyFrames);
+    KWIET_LOG("DspHost: started, %u Hz, %u ch, quantum=%u, block=%u frames, latency=%u frames",
+              sampleRate, channels, m_quantumFrames, m_blockFrames, m_latencyFrames);
 
 #if defined(KWIET_DEV_LOG)
     float devDb = 0.0f;
@@ -226,10 +248,12 @@ void DspHost::Stop()
     m_abiVersion = nullptr;
     m_create = nullptr;
     m_destroy = nullptr;
+    m_blockFramesFn = nullptr;
     m_process = nullptr;
     m_setAttenuation = nullptr;
 
     m_channels = 0;
+    m_quantumFrames = 0;
     m_blockFrames = 0;
     m_blockSamples = 0;
     m_latencyFrames = 0;
