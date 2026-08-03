@@ -644,9 +644,9 @@ Mais l'instance qui reçoit ce flux et atteint `LockForProcess` est initialisée
 en mode **DEFAULT**. Les instances **COMMUNICATIONS restent détruites**. Le
 verrou n'est donc pas (seulement) le contrat AEC.
 
-> Test non concluant à ce stade : lors de la dernière vérification le micro
-> était muet, donc aucun flux communications n'était réellement ouvert. **À
-> refaire micro actif dans une visioconférence.**
+**Test refait micro actif (Meet en cours, micro à −10,5 dB) : zéro ligne de
+log.** L'APO n'est pas même instancié pour ce flux. Implémenter le contrat AEC
+ne suffit donc pas à entrer dans le pipe communications.
 
 Candidats restants pour l'acceptation en COMMUNICATIONS :
 
@@ -660,7 +660,17 @@ Candidats restants pour l'acceptation en COMMUNICATIONS :
   `SAMPLESPERFRAME_MUST_MATCH`, ce qui interdit au moteur de nous confier un
   mixdown multicanal → mono, exactement ce qu'un AEC fait.
 
-Le dernier point est le plus suspect et le moins coûteux à tester.
+Le dernier point est le plus suspect. `APO_FLAG_SAMPLESPERFRAME_MUST_MATCH`
+signifie « ma sortie a autant de canaux que mon entrée ». Or le pipe
+communications alimente un encodeur mono, et Voice Clarity produit
+effectivement du mono depuis un micro multicanal — c'est précisément pourquoi
+elle ne déclare pas ce drapeau. En l'imposant, nous nous excluons peut-être
+nous-mêmes.
+
+Ce n'est pas un changement d'une ligne : accepter une sortie mono implique que
+`LockForProcess` tolère des formats d'entrée/sortie différents, et que
+`DspHost` distingue canaux d'entrée et de sortie. Le moteur Rust, lui, est déjà
+prêt — il somme déjà en mono en interne et ne fait que redupliquer ensuite.
 
 ### Ce que ça change pour le produit
 
