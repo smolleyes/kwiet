@@ -283,6 +283,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hound"
+version = "3.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62adaabb884c94955b19907d60019f4e145d091c75345379e70d1ee696f7854f"
+
+[[package]]
 name = "itertools"
 version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -324,6 +330,7 @@ name = "kwiet-dsp"
 version = "0.1.0"
 dependencies = [
  "deep_filter",
+ "hound",
  "ndarray",
  "tract-core",
  "tract-hir",

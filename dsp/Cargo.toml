@@ -9,7 +9,12 @@ publish = false
 
 [lib]
 name = "kwiet_dsp"
-crate-type = ["cdylib"]
+# rlib en plus du cdylib pour que les exemples (calibration hors ligne) puissent
+# appeler exactement l'ABI que l'APO utilise.
+crate-type = ["cdylib", "rlib"]
+
+[dev-dependencies]
+hound = "3.5"
 
 [dependencies]
 # DeepFilterNet3. La version publiée sur crates.io (0.2.5, 2022) est encore
