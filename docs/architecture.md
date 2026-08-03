@@ -530,14 +530,58 @@ always-on processing » — donc tous les APO logiciels, y compris le nôtre et
 Voice Clarity de Microsoft. WebRTC veut du signal brut pour appliquer ses
 propres AEC/NS/AGC.
 
-### Contournement à tester
+### Contournement testé — et qui NE marche PAS
 
 ```
 chrome.exe --disable-features=WASAPIRawAudioCapture
 ```
 
-À lancer **toutes fenêtres Chrome fermées** (un commutateur ne s'applique qu'au
-démarrage du processus).
+Vérifié appliqué au processus utilitaire audio de Chrome (`--type=utility`,
+sous-type audio). **Aucun effet** : micro à −28,2 dB pendant le Meet, log de
+l'APO inchangé à la ligne près.
+
+### Le mécanisme réel (source Chromium, `audio_low_latency_input_win.cc`)
+
+`SetCommunicationsCategoryAndMaybeRawCaptureMode()` appelle
+`IAudioClient2::SetClientProperties` avec `AudioCategory_Communications` et :
+
+```cpp
+if (channels > 0 && channels <= kMaxRawCaptureChannels)
+    audio_props.Options = AUDCLNT_STREAMOPTIONS_RAW;
+...
+if (aec_config_) {
+    audio_props.Options = AUDCLNT_STREAMOPTIONS_NONE;
+    // "(WARNING: attempting to enable system AEC)"
+}
+```
+
+Deux enseignements décisifs :
+
+1. Le mode raw est conditionné à `raw_processing_supported_`, lu depuis la
+   propriété d'endpoint **`System.Devices.AudioDevice.RawProcessingSupported`**
+   — donc **c'est le périphérique qui autorise Chrome à contourner**, pas
+   seulement un réglage de Chrome.
+2. Chrome **repasse explicitement en `AUDCLNT_STREAMOPTIONS_NONE`** — effets
+   système actifs — dès qu'il veut l'**AEC système**. Le commentaire du code
+   nomme Voice Clarity : ce chemin existe précisément pour que les effets de
+   Microsoft fonctionnent.
+
+### Deux pistes, par ordre de coût
+
+**A. Ne plus déclarer le mode RAW.** Notre INF annonce
+`AUDIO_SIGNALPROCESSINGMODE_RAW` dans
+`PKEY_MFX_ProcessingModes_Supported_For_Streaming` — copié de Voice Clarity. Si
+c'est ce qui fait remonter `RawProcessingSupported = true`, on se tire une
+balle dans le pied : on annonce à Chrome que le raw est disponible, il le
+prend, et notre MFX est contourné. Expérience peu coûteuse : retirer RAW,
+redéployer, re-sélectionner, retester Meet.
+
+**B. Se déclarer fournisseur d'AEC système.** C'est le chemin béni par le code
+de Chromium. Concrètement : implémenter `IApoAcousticEchoCancellation`
+(`{25385759-3236-4101-A943-25693DFB5D2D}`) et le flux de référence associé —
+interfaces que `audiodg` nous demande déjà et auxquelles nous répondons
+`E_NOINTERFACE` (visible dans nos logs depuis le jalon 1). Bien plus de
+travail, mais c'est la voie que Microsoft a ouverte pour ses propres effets.
 
 ### Ce que ça change pour le produit
 
