@@ -277,6 +277,75 @@ Reste à faire pour clore formellement le jalon 1 : le soak 48 h et la matrice
 de robustesse (changement de sample rate, débranchement à chaud, veille/reprise,
 multi-applis) décrits dans `procedure-test-vm.md`.
 
+## 9. ✅ Jalon 2 — plomberie DSP validée (2026-08-03)
+
+### Ce qui tourne
+
+`APOProcess` ne fait plus que pousser le quantum capturé dans un ring SPSC et
+en dépiler un déjà traité. Entre les deux, un worker à priorité normale est le
+seul à appeler le DSP.
+
+| Élément | Mesure |
+|---|---|
+| Format négocié | 48 kHz, 2 ch, quantum 480 frames (10 ms) |
+| Latence du pipeline | 1440 frames = **30 ms**, remontée par `GetLatency` (300000 hns) |
+| Stabilité | `underruns=0 overruns=0 dspErrors=0` sur tous les flux mesurés |
+
+### Preuve que le DSP est réellement dans le chemin
+
+Deux mesures acoustiques successives, **source contrôlée** (bruit blanc joué
+dans le casque), sans réinstaller le pack entre les états — seul le réglage
+d'atténuation change à chaud :
+
+| Atténuation | Prises | Moyenne |
+|---|---|---|
+| 0 dB (identité) | −58,9 / −54,5 / −62,7 dB | −58,7 dB |
+| −40 dB | −91,0 / −91,0 / −91,0 dB | −91,0 dB |
+
+Les trois prises à −40 dB tombent **exactement** sur −91,0 dB : c'est le
+plancher de quantification du 16 bits de la capture dshow. L'écart apparent
+(−32,3 dB) est donc borné par l'instrument de mesure, pas par le DSP.
+
+> ⚠️ Méthode : toute mesure basée sur le **bruit ambiant** est inexploitable —
+> 12 dB de variation entre prises consécutives, 25 dB entre sessions. Il faut
+> une source contrôlée. Deux conclusions antérieures tirées du bruit ambiant se
+> sont révélées être des coïncidences.
+
+### Décisions d'implémentation
+
+| Sujet | Décision et raison |
+|---|---|
+| Chargement du cdylib | `LoadLibraryEx` par **chemin absolu** dérivé de `GetModuleFileName(g_kwietModule)` : le DriverStore n'est pas dans l'ordre de recherche système, un `LoadLibrary("kwiet_dsp.dll")` échouerait |
+| CRT Rust | **statique** (`dsp/.cargo/config.toml`) : sinon la DLL importe `VCRUNTIME140.dll`, absente d'une machine sans VCRedist — le chargement échouerait dans audiodg |
+| Panics Rust | `catch_unwind` à chaque point d'entrée, **jamais `panic = "abort"`** : un abort tuerait audiodg, donc tout le son de la machine |
+| Version d'ABI | `kwiet_dsp_abi_version()` vérifiée avant tout appel — garde contre une DLL périmée laissée dans le DriverStore |
+| Bypass de l'effet | appliqué **dans le worker**, pas en court-circuitant le pipeline : la latence reste constante, donc la valeur annoncée par `GetLatency` (interrogée une seule fois par flux) reste valide |
+| Amorçage | le ring de sortie est pré-rempli de silence à hauteur de la latence : c'est le retard algorithmique, pas un mode dégradé |
+| `BUFFER_SILENT` | ni push ni pop : les rings gardent leur niveau de remplissage et l'audio reprend sans underrun |
+| Réglage dev | `HKLM\SOFTWARE\Kwiet\AttenuationDbTenths` (REG_DWORD signé, dixièmes de dB), lu à `LockForProcess`, **compilé uniquement avec `KWIET_DEV_LOG`**. Provisoire jusqu'au plan de contrôle shmem du jalon 4 |
+
+### Pièges de packaging (coûteux, à ne pas réapprendre)
+
+1. **`pnputil` compare les packages sur `DriverVer`, pas sur leur contenu.** Une
+   DLL recompilée sans bump de version n'est jamais redéployée (« package déjà
+   à jour »), et on mesure l'ancienne sans s'en apercevoir.
+   `sign-install-dev.ps1` réécrit donc une version monotone (`0.2.MMjj.HHmm`)
+   dans la copie packagée à chaque installation.
+2. **Mettre à jour le pack fait perdre la sélection de l'endpoint.** Le marqueur
+   `{CLSID_APO},100` disparaît, plus aucun pack n'est actif, et l'APO cesse
+   d'être chargé — silencieusement. Il faut re-choisir le pack dans
+   Paramètres > Son. **À gérer explicitement dans l'installeur final.**
+3. `pnputil` renvoie **259** (`ERROR_NO_MORE_ITEMS`) quand il n'y a rien à
+   faire : ce n'est pas une erreur.
+
+### Loose end
+
+`SystemSettings.exe` appelle `DllGetClassObject` sur le CLSID « Settings
+manager » (`PKEY_FX_MEP_UserInterfaceClsid`) que l'INF déclare mais que la DLL
+n'implémente pas — on lui renvoie `CLASS_E_CLASSNOTAVAILABLE`. Sans conséquence
+visible aujourd'hui, mais c'est le point d'entrée que Windows offre pour l'UI
+de réglage : à implémenter au jalon 4 plutôt que d'inventer un autre canal.
+
 ## 8. Questions ouvertes
 
 - **`APOInitSystemEffects3`** (Win11 22H2+) : layout différent de SE2 — le

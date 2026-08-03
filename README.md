@@ -7,13 +7,16 @@ L'utilisateur active un toggle : son micro réel est nettoyé par IA
 applications (Google Meet, Discord, …) — sans micro virtuel, sans sélection de
 périphérique.
 
-> **Statut : jalon 1 — APO passthrough chargé et actif** dans `audiodg.exe`
-> (Windows 11 build 26200, micro USB). Reste le soak 48 h et la matrice de
-> robustesse. Aucun DSP encore.
+> **Statut : jalon 2 — plomberie DSP validée.** Ring buffers SPSC + worker
+> thread + cdylib Rust tournent dans `audiodg.exe` (Windows 11 build 26200,
+> micro USB) : latence fixe 30 ms, zéro underrun, gain contrôlable démontré
+> par A/B sur source acoustique contrôlée. Le DSP est encore un simple gain —
+> DeepFilterNet3 vient ensuite. Le soak 48 h du jalon 1 reste à faire.
 >
 > L'installation se fait via un **pack d'effets** (INF composant + extension,
 > cf. [`installer/effectpack/`](installer/effectpack/)) — l'édition manuelle
 > des `FxProperties` par endpoint ne fonctionne plus sur Windows 11 récent.
+> Après installation, le pack doit être **choisi** dans Paramètres > Son.
 
 ## Architecture
 
