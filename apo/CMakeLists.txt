@@ -13,9 +13,12 @@ endif()
 option(KWIET_DEV_LOG "Enable Kwiet dev diagnostics logging" OFF)
 
 add_library(kwiet_apo SHARED
+    src/ControlShm.cpp
+    src/ControlShm.h
     src/Dll.cpp
     src/DspHost.cpp
     src/DspHost.h
+    src/KwietControl.h
     src/KwietApo.cpp
     src/KwietApo.def
     src/KwietApo.h

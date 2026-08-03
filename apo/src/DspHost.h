@@ -4,6 +4,7 @@
 
 #include <atomic>
 
+#include "KwietControl.h"
 #include "SpscRing.h"
 #include "kwiet_dsp.h"
 
@@ -34,7 +35,10 @@ public:
     // the rings and starts the worker. Returns false if the DSP path could not
     // be brought up; the APO then stays in permanent passthrough, which is a
     // valid degraded mode, not an error.
-    bool Start(UINT32 sampleRate, UINT32 channels, UINT32 framesPerQuantum);
+    // `control` may be null: the DSP then runs on its built-in settings and
+    // the UI simply has nothing to steer.
+    bool Start(UINT32 sampleRate, UINT32 channels, UINT32 framesPerQuantum,
+               KwietControlBlock* control);
 
     // Non-RT (UnlockForProcess): stops the worker and releases everything.
     // Safe to call when not started.
@@ -105,6 +109,8 @@ private:
     // first thing in Stop().
     std::atomic<bool> m_active{ false };
     std::atomic<bool> m_enabled{ true };
+    // Read by the worker every block; null when the control plane is down.
+    KwietControlBlock* m_control = nullptr;
     // Latched when the DSP misbehaves: the worker then passes audio through
     // untouched instead of calling into it again.
     std::atomic<bool> m_dspFailed{ false };

@@ -5,6 +5,7 @@
 
 #include <atomic>
 
+#include "ControlShm.h"
 #include "DspHost.h"
 #include "KwietSe3.h"
 
@@ -132,4 +133,10 @@ private:
     // LockForProcess, stopped at UnlockForProcess; if it fails to start the
     // APO simply stays a passthrough.
     DspHost m_dsp;
+
+    // Shared with the UI. Opened alongside the DSP; null when unavailable,
+    // in which case the APO runs on its built-in settings.
+    ControlShm m_control;
+    // Cached so APOProcess never dereferences the ControlShm object itself.
+    std::atomic<KwietControlBlock*> m_controlBlock{ nullptr };
 };

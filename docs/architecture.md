@@ -85,11 +85,58 @@ Tout ce qui alloue vit dans create/destroy. `kwiet_dsp_process` ne doit pas
 allouer après warmup — à vérifier sur la crate `df` (préchauffer ou wrapper si
 elle alloue).
 
-## 6. Contrôle UI ↔ APO ✅
+## 6. Contrôle UI ↔ APO ✅ — implémenté
 
-Shared memory nommée + atomics uniquement : enable/bypass, agressivité,
-VU-mètres avant/après. L'UI ne parle jamais au thread RT. (Layout précis :
-jalon 4.)
+Bloc de mémoire partagée nommé, **atomiques 32 bits uniquement** : ni pointeur,
+ni taille, ni longueur ne traverse la frontière. Layout : `apo/src/KwietControl.h`,
+qui est **le contrat** avec l'UI — tout changement impose un bump de
+`KWIET_CONTROL_VERSION`.
+
+| Sens | Champs |
+|---|---|
+| UI → APO | `enabled` (bypass), `aggressivenessTenths` (0–1000, dixièmes de dB) |
+| APO → UI | `streaming`, `generation`, `sampleRate`, `channels`, `latencyFrames`, `peakIn`, `peakOut`, `underruns`, `dspErrors`, `dspActive` |
+
+### Qui crée le bloc, et pourquoi
+
+**L'APO le crée, pas l'UI.** Créer un objet dans l'espace de noms `Global\`
+exige `SeCreateGlobalPrivilege`, que le jeton d'un utilisateur interactif ne
+possède pas — même administrateur, il est filtré. `audiodg` l'a. Le `Global\`
+est indispensable : l'APO vit en session 0, l'UI dans la session interactive.
+
+Conséquence de conception : le bloc **n'existe que pendant un flux**. L'UI
+persiste donc ses réglages de son côté et les re-pousse à chaque changement de
+`generation`, qui signale un nouveau flux.
+
+### Descripteur de sécurité et modèle de menace
+
+```
+D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x0007;;;AU)S:(ML;;NW;;;ME)
+```
+
+L'étiquette d'intégrité **Medium** est nécessaire : sans elle, le label High
+hérité d'un processus système interdirait toute écriture depuis une UI
+ordinaire.
+
+> **Menace assumée** : tout processus d'intégrité moyenne de la session peut
+> couper l'effet ou changer l'agressivité. C'est une nuisance, pas une
+> escalade — aucune valeur du bloc n'est utilisée comme pointeur, taille ou
+> index, et **toutes sont bornées à la lecture** côté APO. À restreindre à
+> `INTERACTIVE` ou à un groupe dédié si le produit l'exige un jour.
+
+### Chemins de lecture/écriture
+
+- **Worker** (hors RT) : relit `enabled` et `aggressivenessTenths` à chaque
+  réveil, ne pousse au moteur que sur changement effectif.
+- **Thread temps-réel** : publie `peakIn`/`peakOut`. Un balayage linéaire de
+  ~1000 flottants et deux `store` relaxés — pas d'appel système, donc conforme
+  aux règles du chemin RT. `peakIn` est mesuré **avant** le DSP, car avec
+  `APO_FLAG_INPLACE` le tampon d'entrée peut être celui de sortie.
+- **Deux interrupteurs indépendants** : l'effet est actif seulement si Windows
+  (SE3) *et* l'UI le veulent.
+
+Banc d'essai : `bench/kwiet-control.ps1` lit et pilote le bloc **sans
+élévation** — c'est ce qui valide l'ACL en pratique.
 
 ## 7. Détails d'implémentation du shim (jalon 1)
 

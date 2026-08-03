@@ -19,6 +19,23 @@ constexpr HRESULT kFormatNotSupported = APOERR_FORMAT_NOT_SUPPORTED;
 constexpr HRESULT kFormatNotSupported = E_FAIL;
 #endif
 
+// Peak of an interleaved block, scaled for the VU meter. RT-safe: a linear
+// scan of ~1000 floats per quantum, no branching beyond the compare.
+int32_t PeakQ15(const float* samples, size_t count)
+{
+    float peak = 0.0f;
+    for (size_t i = 0; i < count; ++i) {
+        const float magnitude = samples[i] < 0.0f ? -samples[i] : samples[i];
+        if (magnitude > peak) {
+            peak = magnitude;
+        }
+    }
+    if (peak > 1.0f) {
+        peak = 1.0f;
+    }
+    return static_cast<int32_t>(peak * KWIET_PEAK_SCALE);
+}
+
 // The shared-mode engine feeds APOs interleaved float32; anything else is refused.
 bool IsFloat32(IAudioMediaType* type, UNCOMPRESSEDAUDIOFORMAT* outFmt = nullptr)
 {
@@ -362,7 +379,14 @@ HRESULT KwietApo::LockForProcess(UINT32 u32NumInputConnections,
     // passthrough, which is the whole point of the fail-open design.
     const UINT32 quantumFrames = ppInputConnections[0]->u32MaxFrameCount;
     m_latencyHns = 0;
-    if (m_dsp.Start(m_sampleRate, m_samplesPerFrame, quantumFrames)) {
+
+    KwietControlBlock* control = nullptr;
+    if (m_control.Open()) {
+        control = m_control.Block();
+    }
+    m_controlBlock.store(control, std::memory_order_release);
+
+    if (m_dsp.Start(m_sampleRate, m_samplesPerFrame, quantumFrames, control)) {
         m_dsp.SetEnabled(m_effectEnabled.load(std::memory_order_relaxed));
         if (m_sampleRate != 0) {
             m_latencyHns = static_cast<HNSTIME>(m_dsp.LatencyFrames()) * 10000000
@@ -372,10 +396,24 @@ HRESULT KwietApo::LockForProcess(UINT32 u32NumInputConnections,
         KWIET_LOG("LockForProcess: DSP unavailable, staying in passthrough");
     }
 
+    if (control != nullptr) {
+        control->sampleRate.store(static_cast<int32_t>(m_sampleRate), std::memory_order_relaxed);
+        control->channels.store(static_cast<int32_t>(m_samplesPerFrame), std::memory_order_relaxed);
+        control->latencyFrames.store(static_cast<int32_t>(m_dsp.LatencyFrames()),
+                                     std::memory_order_relaxed);
+        control->dspActive.store(m_latencyHns != 0 ? 1 : 0, std::memory_order_relaxed);
+        control->underruns.store(0, std::memory_order_relaxed);
+        control->dspErrors.store(0, std::memory_order_relaxed);
+        // Bumping the generation is how the UI learns a new stream started and
+        // that it should push its stored settings again.
+        control->generation.fetch_add(1, std::memory_order_relaxed);
+        control->streaming.store(1, std::memory_order_release);
+    }
+
     m_locked.store(true, std::memory_order_release);
-    KWIET_LOG("LockForProcess: S_OK, %u ch, %u Hz, quantum=%u frames, latency=%lld hns",
+    KWIET_LOG("LockForProcess: S_OK, %u ch, %u Hz, quantum=%u frames, latency=%lld hns, control=%d",
               m_samplesPerFrame, m_sampleRate, quantumFrames,
-              static_cast<long long>(m_latencyHns));
+              static_cast<long long>(m_latencyHns), control != nullptr);
     return S_OK;
 }
 
@@ -384,7 +422,20 @@ HRESULT KwietApo::UnlockForProcess()
     m_locked.store(false, std::memory_order_release);
     KWIET_LOG("UnlockForProcess: underruns=%u overruns=%u dspErrors=%u",
               m_dsp.Underruns(), m_dsp.Overruns(), m_dsp.DspErrors());
+
+    if (KwietControlBlock* control = m_controlBlock.load(std::memory_order_acquire)) {
+        control->underruns.store(static_cast<int32_t>(m_dsp.Underruns()), std::memory_order_relaxed);
+        control->dspErrors.store(static_cast<int32_t>(m_dsp.DspErrors()), std::memory_order_relaxed);
+        control->peakIn.store(0, std::memory_order_relaxed);
+        control->peakOut.store(0, std::memory_order_relaxed);
+        control->dspActive.store(0, std::memory_order_relaxed);
+        control->streaming.store(0, std::memory_order_release);
+    }
+    // Clear before closing: APOProcess must never see a stale mapping.
+    m_controlBlock.store(nullptr, std::memory_order_release);
+
     m_dsp.Stop();
+    m_control.Close();
     m_latencyHns = 0;
     return S_OK;
 }
@@ -422,6 +473,13 @@ void KwietApo::APOProcess(UINT32 u32NumInputConnections,
     if (in->u32BufferFlags == BUFFER_VALID) {
         const float* src = reinterpret_cast<const float*>(in->pBuffer);
         float* dst = reinterpret_cast<float*>(out->pBuffer);
+        const size_t samples = static_cast<size_t>(frames) * m_samplesPerFrame;
+
+        // VU meters. Measured before the DSP because with APO_FLAG_INPLACE the
+        // input buffer may be the output buffer.
+        KwietControlBlock* control = m_controlBlock.load(std::memory_order_acquire);
+        const int32_t peakIn = (control != nullptr) ? PeakQ15(src, samples) : 0;
+
         // The DSP pipeline handles the copy when it has audio ready. On any
         // doubt -- not started, ring underrun, worker gone -- it says so and
         // we fall open to a plain copy rather than emit silence or block.
@@ -430,6 +488,12 @@ void KwietApo::APOProcess(UINT32 u32NumInputConnections,
                 memcpy(dst, src, bytes);
             }
         }
+
+        if (control != nullptr) {
+            control->peakIn.store(peakIn, std::memory_order_relaxed);
+            control->peakOut.store(PeakQ15(dst, samples), std::memory_order_relaxed);
+        }
+
         out->u32ValidFrameCount = frames;
         out->u32BufferFlags = BUFFER_VALID;
     } else {

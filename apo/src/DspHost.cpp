@@ -107,7 +107,8 @@ bool DspHost::LoadLibraryFromModuleDir()
     return true;
 }
 
-bool DspHost::Start(UINT32 sampleRate, UINT32 channels, UINT32 framesPerQuantum)
+bool DspHost::Start(UINT32 sampleRate, UINT32 channels, UINT32 framesPerQuantum,
+                    KwietControlBlock* control)
 {
     Stop();
 
@@ -117,6 +118,7 @@ bool DspHost::Start(UINT32 sampleRate, UINT32 channels, UINT32 framesPerQuantum)
 
     m_channels = channels;
     m_quantumFrames = framesPerQuantum;
+    m_control = control;
 
     if (!LoadLibraryFromModuleDir()) {
         Stop();
@@ -202,7 +204,17 @@ bool DspHost::Start(UINT32 sampleRate, UINT32 channels, UINT32 framesPerQuantum)
 #if defined(KWIET_DEV_LOG)
     float devDb = 0.0f;
     if (ReadDevAttenuationDb(&devDb)) {
-        SetAttenuationDb(devDb);
+        // Seed the control block rather than the engine directly: the worker
+        // treats the block as authoritative and would immediately override a
+        // value written straight to the engine.
+        if (m_control != nullptr) {
+            auto tenths = static_cast<int32_t>(devDb * 10.0f);
+            if (tenths < KWIET_AGGRESSIVENESS_MIN_TENTHS) tenths = KWIET_AGGRESSIVENESS_MIN_TENTHS;
+            if (tenths > KWIET_AGGRESSIVENESS_MAX_TENTHS) tenths = KWIET_AGGRESSIVENESS_MAX_TENTHS;
+            m_control->aggressivenessTenths.store(tenths, std::memory_order_relaxed);
+        } else {
+            SetAttenuationDb(devDb);
+        }
         KWIET_LOG("DspHost: dev attenuation override = %.1f dB", static_cast<double>(devDb));
     }
 #endif
@@ -252,6 +264,7 @@ void DspHost::Stop()
     m_process = nullptr;
     m_setAttenuation = nullptr;
 
+    m_control = nullptr;
     m_channels = 0;
     m_quantumFrames = 0;
     m_blockFrames = 0;
@@ -309,7 +322,24 @@ void DspHost::WorkerLoop()
     // real-time thread.
     KWIET_LOG("DspHost: worker started");
 
+    // Last value pushed to the engine, so a slider that has not moved costs
+    // nothing. -1 forces the first block to publish.
+    int32_t appliedAggressiveness = -1;
+
     while (WaitForSingleObject(m_stopEvent, kWorkerPollMs) == WAIT_TIMEOUT) {
+        // Control plane, polled once per wakeup rather than per block.
+        if (m_control != nullptr) {
+            int32_t tenths = m_control->aggressivenessTenths.load(std::memory_order_relaxed);
+            // Clamp: the block is writable by any user process, so treat every
+            // value in it as untrusted.
+            if (tenths < KWIET_AGGRESSIVENESS_MIN_TENTHS) tenths = KWIET_AGGRESSIVENESS_MIN_TENTHS;
+            if (tenths > KWIET_AGGRESSIVENESS_MAX_TENTHS) tenths = KWIET_AGGRESSIVENESS_MAX_TENTHS;
+            if (tenths != appliedAggressiveness) {
+                m_setAttenuation(m_engine, static_cast<float>(tenths) / 10.0f);
+                appliedAggressiveness = tenths;
+            }
+        }
+
         // Drain whatever whole blocks are available this wakeup.
         while (m_inRing.Available() >= m_blockSamples) {
             if (m_outRing.Space() < m_blockSamples) {
@@ -321,7 +351,11 @@ void DspHost::WorkerLoop()
                 break;
             }
 
-            const bool bypass = !m_enabled.load(std::memory_order_relaxed)
+            // Two independent off switches: Windows' own effect toggle (SE3)
+            // and the Kwiet UI. Either one bypasses.
+            const bool uiEnabled = m_control == nullptr
+                                   || m_control->enabled.load(std::memory_order_relaxed) != 0;
+            const bool bypass = !m_enabled.load(std::memory_order_relaxed) || !uiEnabled
                                 || m_dspFailed.load(std::memory_order_relaxed);
             if (bypass) {
                 memcpy(m_scratchOut, m_scratchIn, m_blockSamples * sizeof(float));
