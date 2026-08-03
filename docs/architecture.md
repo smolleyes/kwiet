@@ -138,6 +138,25 @@ ordinaire.
 Banc d'essai : `bench/kwiet-control.ps1` lit et pilote le bloc **sans
 élévation** — c'est ce qui valide l'ACL en pratique.
 
+### ✅ Validé sur machine (2026-08-03)
+
+Depuis un processus utilisateur **non élevé**, flux de capture actif :
+
+| Action | Observation |
+|---|---|
+| Lecture d'état | `flux=actif dsp=on effet=on agress=100 dB 48000 Hz/2ch lat=1440 frames gen=1 under=0 err=0` |
+| Agressivité 100 → 25 dB | VU sortie remonte de **−90,3 → −76,3 dB**, immédiatement, **sans redémarrage audio** |
+| Bypass | VU sortie devient **exactement égale** à l'entrée (−69,5 / −69,5) |
+| Retour à 30 dB | VU sortie repasse sous l'entrée |
+| VU pendant la parole | entrée −69,5 → −54,3 dB, sortie suit à −59,7 dB |
+
+`underruns=0` sur toute la séance. L'écriture sans élévation confirme le
+descripteur de sécurité, et l'égalité parfaite des VU en bypass confirme que
+le chemin de contournement est réellement transparent.
+
+**C'est le verrou qui bloquait l'UI : le réglage est désormais instantané.**
+Chaque essai d'agressivité coûtait jusqu'ici un redémarrage de la pile audio.
+
 ## 7. Détails d'implémentation du shim (jalon 1)
 
 | Sujet | Décision |
