@@ -1,0 +1,24 @@
+[package]
+name = "kwiet-dsp"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "Apache-2.0"
+description = "Kwiet DSP engine exposed through a stable C ABI"
+publish = false
+
+[lib]
+name = "kwiet_dsp"
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+# NOTE: panic = "abort" is deliberately NOT set. This library is loaded inside
+# audiodg.exe; aborting would kill system audio. Every extern "C" entry point
+# catches unwinds and reports an error code instead, so the APO can fail open
+# to passthrough.
+
+[lints.clippy]
+undocumented_unsafe_blocks = "warn"

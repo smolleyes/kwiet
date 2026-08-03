@@ -1,0 +1,6 @@
+# The cdylib is loaded into audiodg.exe, which must not depend on the VC++
+# redistributable being installed. Static CRT here mirrors /MT on the APO side
+# (see apo/CMakeLists.txt); without it the DLL imports VCRUNTIME140.dll and
+# loading can fail on a clean machine, taking the DSP path down.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

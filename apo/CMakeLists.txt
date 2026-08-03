@@ -14,6 +14,8 @@ option(KWIET_DEV_LOG "Enable Kwiet dev diagnostics logging" OFF)
 
 add_library(kwiet_apo SHARED
     src/Dll.cpp
+    src/DspHost.cpp
+    src/DspHost.h
     src/KwietApo.cpp
     src/KwietApo.def
     src/KwietApo.h
@@ -22,7 +24,11 @@ add_library(kwiet_apo SHARED
     src/KwietGuids.h
     src/KwietSe3.h
     src/Module.h
+    src/SpscRing.h
 )
+
+# Stable C ABI shared with the Rust cdylib (dsp/).
+target_include_directories(kwiet_apo PRIVATE ../dsp/include)
 
 if(KWIET_DEV_LOG)
     target_compile_definitions(kwiet_apo PRIVATE KWIET_DEV_LOG)

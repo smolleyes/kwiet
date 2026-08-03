@@ -5,6 +5,7 @@
 
 #include <atomic>
 
+#include "DspHost.h"
 #include "KwietSe3.h"
 
 #include "KwietGuids.h"
@@ -119,9 +120,16 @@ private:
     GUID   m_processingMode{};      // from APOInitSystemEffects2, zero otherwise
     UINT32 m_samplesPerFrame = 0;   // interleaved channel count
     UINT32 m_bytesPerFrame = 0;
+    UINT32 m_sampleRate = 0;
+    HNSTIME m_latencyHns = 0;       // fixed pipeline delay, 0 until locked
 
-    // User-facing effect state (Settings can toggle it via SE3). Milestone 1:
-    // purely declarative, the passthrough never alters audio. Milestone 2
-    // wires it to the DSP bypass.
+    // User-facing effect state, toggled from Settings through SE3. Forwarded
+    // to the DSP worker as a bypass so the pipeline delay stays constant
+    // whichever way it is set (GetLatency is only queried once per stream).
     std::atomic<bool> m_effectEnabled{ true };
+
+    // Owns the rings, the worker thread and the Rust cdylib. Started at
+    // LockForProcess, stopped at UnlockForProcess; if it fails to start the
+    // APO simply stays a passthrough.
+    DspHost m_dsp;
 };

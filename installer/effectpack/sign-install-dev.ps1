@@ -20,6 +20,7 @@
 [CmdletBinding()]
 param(
     [string]$DllPath,
+    [string]$DspDllPath,
     [switch]$Force
 )
 
@@ -37,6 +38,10 @@ if (-not $DllPath) { $DllPath = Join-Path $root 'apo\build\Release\KwietApo.dll'
 if (-not (Test-Path $DllPath)) {
     throw "DLL introuvable : $DllPath — compile d'abord (cmake --build apo/build --config Release)."
 }
+if (-not $DspDllPath) { $DspDllPath = Join-Path $root 'dsp\target\release\kwiet_dsp.dll' }
+if (-not (Test-Path $DspDllPath)) {
+    throw "DSP introuvable : $DspDllPath — compile d'abord (cd dsp ; cargo build --release)."
+}
 
 # --- Outils SDK -----------------------------------------------------------
 $kitBin = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Directory |
@@ -51,10 +56,23 @@ foreach ($t in $signtool, $makecat) {
 # --- Package --------------------------------------------------------------
 New-Item -ItemType Directory -Force -Path $packageDir, $stateDir | Out-Null
 Copy-Item $DllPath (Join-Path $packageDir 'KwietApo.dll') -Force
+Copy-Item $DspDllPath (Join-Path $packageDir 'kwiet_dsp.dll') -Force
 Copy-Item (Join-Path $PSScriptRoot 'kwiet_component.inf') $packageDir -Force
 Copy-Item (Join-Path $PSScriptRoot 'kwiet_extension.inf') $packageDir -Force
 Remove-Item (Join-Path $packageDir 'kwiet.cat') -Force -ErrorAction SilentlyContinue
-Write-Host "-> Package prêt : $packageDir"
+
+# pnputil compare les packages sur DriverVer, pas sur le contenu : sans bump,
+# une DLL recompilée n'est jamais redéployée ("package déjà à jour"). On
+# réécrit donc une version monotone dans la COPIE packagée (jamais dans le
+# fichier source du repo) : 0.2.MMjj.HHmm, chaque champ < 65536.
+$now = Get-Date
+$devVer = '0.2.{0}.{1}' -f $now.ToString('MMdd'), $now.ToString('HHmm')
+$driverVerLine = 'DriverVer   = {0},{1}' -f $now.ToString('MM/dd/yyyy'), $devVer
+foreach ($inf in 'kwiet_component.inf', 'kwiet_extension.inf') {
+    $p = Join-Path $packageDir $inf
+    (Get-Content $p) -replace '^\s*DriverVer\s*=.*$', $driverVerLine | Set-Content -Path $p -Encoding Ascii
+}
+Write-Host "-> Package prêt : $packageDir (DriverVer $devVer)"
 
 # --- Certificat de test ---------------------------------------------------
 $cert = Get-ChildItem 'Cert:\CurrentUser\My' |
@@ -78,9 +96,11 @@ foreach ($store in 'Root', 'TrustedPublisher') {
 Write-Host '-> Certificat approuvé (machine : Root + TrustedPublisher) — DEV UNIQUEMENT'
 
 # --- Signature DLL + catalogue -------------------------------------------
-& $signtool sign /fd SHA256 /f $pfxPath /p $pfxPassword (Join-Path $packageDir 'KwietApo.dll') | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "signtool (DLL) a échoué ($LASTEXITCODE)." }
-Write-Host '-> DLL signée (PETrust)'
+foreach ($bin in 'KwietApo.dll', 'kwiet_dsp.dll') {
+    & $signtool sign /fd SHA256 /f $pfxPath /p $pfxPassword (Join-Path $packageDir $bin) | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "signtool ($bin) a échoué ($LASTEXITCODE)." }
+}
+Write-Host '-> DLL signées (PETrust) : KwietApo.dll, kwiet_dsp.dll'
 
 $cdfPath = Join-Path $stateDir 'kwiet.cdf'
 @"
@@ -95,6 +115,7 @@ CATATTR1=0x10010001:OSAttr:2:10.0
 <HASH>kwiet_component.inf=$packageDir\kwiet_component.inf
 <HASH>kwiet_extension.inf=$packageDir\kwiet_extension.inf
 <HASH>KwietApo.dll=$packageDir\KwietApo.dll
+<HASH>kwiet_dsp.dll=$packageDir\kwiet_dsp.dll
 "@ | Set-Content -Path $cdfPath -Encoding Ascii
 
 & $makecat -v $cdfPath | Out-Null
@@ -107,11 +128,17 @@ Write-Host '-> Catalogue généré et signé'
 
 # --- Installation ---------------------------------------------------------
 $published = @()
+# Codes non fatals de pnputil : 0 = OK, 259 (ERROR_NO_MORE_ITEMS) = package déjà
+# à jour, rien à faire, 3010 = succès mais redémarrage conseillé.
+$pnputilOk = @(0, 259, 3010)
 foreach ($inf in 'kwiet_component.inf', 'kwiet_extension.inf') {
     Write-Host "-> pnputil /add-driver $inf /install"
     $out = & pnputil.exe /add-driver (Join-Path $packageDir $inf) /install 2>&1 | Out-String
     Write-Host ($out -replace '(?m)^', '   ')
-    if ($LASTEXITCODE -ne 0) { throw "pnputil a échoué pour $inf (code $LASTEXITCODE)." }
+    if ($pnputilOk -notcontains $LASTEXITCODE) {
+        throw "pnputil a échoué pour $inf (code $LASTEXITCODE)."
+    }
+    if ($LASTEXITCODE -eq 259) { Write-Host '   (déjà à jour, rien à faire)' }
     if ($out -match '(oem\d+\.inf)') { $published += $Matches[1] }
 }
 Set-Content -Path (Join-Path $stateDir 'published-drivers.txt') -Value $published -Encoding Ascii

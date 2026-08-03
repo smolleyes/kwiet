@@ -9,7 +9,7 @@ Signature   = "$WINDOWS NT$"
 Class       = AudioProcessingObject
 ClassGuid   = {5989fce8-9cd0-467d-8a6a-5419e31529d4}
 Provider    = %ProviderName%
-DriverVer   = 08/03/2026,0.1.1.0
+DriverVer   = 08/03/2026,0.2.0.0
 CatalogFile = kwiet.cat
 PnpLockDown = 1
 
@@ -25,6 +25,7 @@ CopyFiles = KwietComponent_CopyFiles
 
 [KwietComponent_CopyFiles]
 KwietApo.dll
+kwiet_dsp.dll
 
 [KwietComponent_Install.NTamd64.Services]
 AddService=,2    ; no function driver, install a null driver.
@@ -86,12 +87,14 @@ HKR,Classes\CLSID\%HSA_COM_CLASS_CLSID%\Version,,,"1.0"
 
 [SourceDisksFiles]
 KwietApo.dll = 1
+kwiet_dsp.dll = 1
 
 [DestinationDirs]
 KwietComponent_CopyFiles = 13 ; 13=Package's DriverStore directory
 
 [SignatureAttributes]
 KwietApo.dll = SignatureAttributes.PETrust
+kwiet_dsp.dll = SignatureAttributes.PETrust
 
 [SignatureAttributes.PETrust]
 PETrust = true

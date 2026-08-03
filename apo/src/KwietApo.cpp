@@ -160,7 +160,8 @@ ULONG KwietApo::Release()
 
 HRESULT KwietApo::Reset()
 {
-    // Passthrough holds no history. Milestone 2: flush rings + DSP state here.
+    // The engine calls Reset outside the streaming state; the rings are
+    // rebuilt by the next LockForProcess, so there is nothing to flush here.
     return S_OK;
 }
 
@@ -169,9 +170,9 @@ HRESULT KwietApo::GetLatency(HNSTIME* pTime)
     if (pTime == nullptr) {
         return E_POINTER;
     }
-    // Pure passthrough: no algorithmic delay. Milestone 2 reports the fixed
-    // ring/lookahead delay here so the engine can compensate timestamps.
-    *pTime = 0;
+    // Fixed delay of the ring pipeline, so the engine can compensate capture
+    // timestamps. Zero until LockForProcess has sized it.
+    *pTime = m_latencyHns;
     return S_OK;
 }
 
@@ -354,21 +355,37 @@ HRESULT KwietApo::LockForProcess(UINT32 u32NumInputConnections,
 
     m_samplesPerFrame = inFmt.dwSamplesPerFrame;
     m_bytesPerFrame = inFmt.dwSamplesPerFrame * inFmt.dwBytesPerSampleContainer;
+    m_sampleRate = static_cast<UINT32>(inFmt.fFramesPerSecond);
 
-    // Milestone 2: allocate SPSC rings and start the worker thread HERE
-    // (non-RT context); APOProcess must never allocate.
+    // Everything that allocates, loads a DLL or starts a thread happens here,
+    // never in APOProcess. A failure is not fatal: the APO degrades to a plain
+    // passthrough, which is the whole point of the fail-open design.
+    const UINT32 quantumFrames = ppInputConnections[0]->u32MaxFrameCount;
+    m_latencyHns = 0;
+    if (m_dsp.Start(m_sampleRate, m_samplesPerFrame, quantumFrames)) {
+        m_dsp.SetEnabled(m_effectEnabled.load(std::memory_order_relaxed));
+        if (m_sampleRate != 0) {
+            m_latencyHns = static_cast<HNSTIME>(m_dsp.LatencyFrames()) * 10000000
+                           / static_cast<HNSTIME>(m_sampleRate);
+        }
+    } else {
+        KWIET_LOG("LockForProcess: DSP unavailable, staying in passthrough");
+    }
 
     m_locked.store(true, std::memory_order_release);
-    KWIET_LOG("LockForProcess: S_OK, %u ch, %.0f Hz", m_samplesPerFrame,
-              static_cast<double>(inFmt.fFramesPerSecond));
+    KWIET_LOG("LockForProcess: S_OK, %u ch, %u Hz, quantum=%u frames, latency=%lld hns",
+              m_samplesPerFrame, m_sampleRate, quantumFrames,
+              static_cast<long long>(m_latencyHns));
     return S_OK;
 }
 
 HRESULT KwietApo::UnlockForProcess()
 {
-    KWIET_LOG("UnlockForProcess");
     m_locked.store(false, std::memory_order_release);
-    // Milestone 2: stop the worker and free rings here.
+    KWIET_LOG("UnlockForProcess: underruns=%u overruns=%u dspErrors=%u",
+              m_dsp.Underruns(), m_dsp.Overruns(), m_dsp.DspErrors());
+    m_dsp.Stop();
+    m_latencyHns = 0;
     return S_OK;
 }
 
@@ -403,14 +420,22 @@ void KwietApo::APOProcess(UINT32 u32NumInputConnections,
     const size_t bytes = static_cast<size_t>(frames) * m_bytesPerFrame;
 
     if (in->u32BufferFlags == BUFFER_VALID) {
-        const void* src = reinterpret_cast<const void*>(in->pBuffer);
-        void* dst = reinterpret_cast<void*>(out->pBuffer);
-        if (src != dst) {
-            memcpy(dst, src, bytes);
+        const float* src = reinterpret_cast<const float*>(in->pBuffer);
+        float* dst = reinterpret_cast<float*>(out->pBuffer);
+        // The DSP pipeline handles the copy when it has audio ready. On any
+        // doubt -- not started, ring underrun, worker gone -- it says so and
+        // we fall open to a plain copy rather than emit silence or block.
+        if (!m_dsp.ProcessRt(src, dst, frames)) {
+            if (src != dst) {
+                memcpy(dst, src, bytes);
+            }
         }
         out->u32ValidFrameCount = frames;
         out->u32BufferFlags = BUFFER_VALID;
     } else {
+        // BUFFER_SILENT: the pipeline is left untouched (nothing pushed, nothing
+        // popped) so the rings keep their fill level and audio resumes without
+        // an underrun.
         // BUFFER_SILENT (or anything unexpected): write real silence AND set
         // the flag; downstream is not required to honor the flag alone.
         memset(reinterpret_cast<void*>(out->pBuffer), 0, bytes);
@@ -489,8 +514,10 @@ HRESULT KwietApo::SetAudioSystemEffectState(GUID effectId, AUDIO_SYSTEMEFFECT_ST
     }
     const bool enabled = (state == AUDIO_SYSTEMEFFECT_STATE_ON);
     m_effectEnabled.store(enabled, std::memory_order_relaxed);
+    // Bypasses the DSP inside the worker; the pipeline delay is unchanged so
+    // the latency reported at stream start stays valid.
+    m_dsp.SetEnabled(enabled);
     KWIET_LOG("SetAudioSystemEffectState: enabled=%d", enabled);
-    // Milestone 2: propagate to the DSP bypass flag (shmem/atomics).
     return S_OK;
 }
 
