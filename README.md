@@ -7,11 +7,13 @@ L'utilisateur active un toggle : son micro réel est nettoyé par IA
 applications (Google Meet, Discord, …) — sans micro virtuel, sans sélection de
 périphérique.
 
-> **Statut : jalon 2 — plomberie DSP validée.** Ring buffers SPSC + worker
-> thread + cdylib Rust tournent dans `audiodg.exe` (Windows 11 build 26200,
-> micro USB) : latence fixe 30 ms, zéro underrun, gain contrôlable démontré
-> par A/B sur source acoustique contrôlée. Le DSP est encore un simple gain —
-> DeepFilterNet3 vient ensuite. Le soak 48 h du jalon 1 reste à faire.
+> **Statut : DeepFilterNet3 tourne dans `audiodg.exe`.** Ring buffers SPSC +
+> worker + cdylib Rust avec le modèle DFN3 embarqué (Windows 11 build 26200,
+> micro USB) : latence fixe 30 ms, zéro underrun, **≥ 24 dB de suppression de
+> bruit** mesurés sur source contrôlée, ~2 % d'un cœur.
+>
+> Restent : le soak 48 h du jalon 1, le resampling hors 48 kHz, et le bench
+> AGC Chrome du jalon 3.
 >
 > L'installation se fait via un **pack d'effets** (INF composant + extension,
 > cf. [`installer/effectpack/`](installer/effectpack/)) — l'édition manuelle

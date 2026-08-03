@@ -346,6 +346,76 @@ n'implémente pas — on lui renvoie `CLASS_E_CLASSNOTAVAILABLE`. Sans conséque
 visible aujourd'hui, mais c'est le point d'entrée que Windows offre pour l'UI
 de réglage : à implémenter au jalon 4 plutôt que d'inventer un autre canal.
 
+## 10. ✅ DeepFilterNet3 intégré (2026-08-03)
+
+Le gain de test du jalon 2 est remplacé par DFN3 (crate `deep_filter`, backend
+tract/ONNX). Le modèle est **embarqué dans la DLL** (`DfParams::default()`,
+feature `default-model`) : `kwiet_dsp.dll` fait 25 Mo et ne dépend d'aucun
+fichier externe ni d'aucune DLL hors système.
+
+### Mesures locales (tests du crate)
+
+| Mesure | Résultat |
+|---|---|
+| Facteur temps-réel, bruit | **0,017** |
+| Facteur temps-réel, tonalité | **0,020** |
+| Bruit large bande résiduel | **0,0 %** |
+| Tests / clippy | 14 verts, `-D warnings` propre |
+
+Le RTF est mesuré **sur du bruit** autant que sur une tonalité : DFN3
+court-circuite ses étages lourds quand le SNR local est élevé
+(`apply_stages()`), donc un signal propre flatterait le résultat. ~2 % d'un
+cœur laisse 50× de marge sur le budget de 10 ms par bloc.
+
+### Validation sur machine (A/B, source contrôlée)
+
+Bruit blanc joué dans le casque, pack sélectionné, aucune réinstallation entre
+les états — seul le réglage d'agressivité change à chaud :
+
+| Suppression | Prises | Moyenne |
+|---|---|---|
+| 0 dB (désactivée) | −63,9 / −63,8 / −63,9 dB | −63,9 dB |
+| 100 dB (maximale) | −91,0 / −91,0 / −81,3 dB | −87,8 dB |
+
+**Réduction ≥ 24 dB**, avec `underruns=0 overruns=0 dspErrors=0` dans les deux
+états, `block=480` (le hop imposé par DFN3), latence inchangée à 1440 frames.
+
+À noter méthodologiquement : l'état à 0 dB donne trois prises à 0,1 dB près,
+là où les mesures sur bruit ambiant variaient de 12 dB. La source contrôlée
+est ce qui rend ces chiffres exploitables. Deux des trois prises à 100 dB
+touchent le plancher 16 bits (−91,0 dB), donc la suppression réelle est
+supérieure à la valeur affichée.
+
+### Changements d'ABI (v2)
+
+| Élément | Décision |
+|---|---|
+| `kwiet_dsp_block_frames()` | **nouveau** — DFN3 impose 480 frames (10 ms) par inférence ; l'hôte s'en sert comme taille de bloc du worker, les rings découplant ça du quantum de l'APO |
+| `kwiet_dsp_set_attenuation_db()` | **sémantique changée** — n'est plus un gain sur le signal mais la limite maximale d'atténuation du bruit (0 = aucune suppression, 100 = illimitée, défaut du modèle). C'est le contrôle « agressivité » |
+| Format | 48 kHz **uniquement** : `create` renvoie NULL sinon, l'hôte reste en passthrough. Resampling à faire |
+| Canaux | modèle mono : somme des canaux en entrée, résultat réécrit sur tous les canaux en sortie |
+| Sûreté | `DfTract` n'est pas `Sync` : l'état du modèle vit dans un `UnsafeCell` touché uniquement par `process` (contrat mono-worker), les contrôles restent des atomiques relues au bloc suivant — pas d'aliasing `&`/`&mut` |
+| Allocation | `process` **alloue** (tract alloue par inférence). Acceptable : il tourne sur le worker, jamais sur le thread RT — c'est exactement pourquoi l'architecture l'y a placé |
+
+### Épinglages de dépendances obligatoires
+
+1. **Famille `tract` en `=0.21.4`.** `deep_filter` déclare `^0.21.4`, mais tract
+   a renommé un champ public (`symbol_table` → `symbols`) dans une version que
+   cargo juge compatible ; résolu en 0.21.17, `deep_filter` ne compile plus.
+   L'épinglage doit être fait **dans le manifeste** : `cargo update --precise`
+   rétrograde crate par crate et casse la cohérence interne de la famille
+   (`tract-pulse-opl` exige `=` sa propre version).
+2. **`kstring` en `2.0.2`** — la 2.0.4 exige rustc 1.96, la toolchain est en 1.90.
+
+### Reste à faire
+
+- **Resampling** pour les endpoints qui ne négocient pas 48 kHz (aujourd'hui :
+  passthrough silencieux).
+- **Latence réelle** : les 30 ms du ring sont remontés à `GetLatency`, mais le
+  lookahead propre à DFN3 n'y est pas ajouté — à quantifier et à déclarer.
+- **Qualité sur la voix** : tout ce qui précède mesure la suppression de bruit
+  pur. L'effet sur la parole (et le bench AGC Chrome du jalon 3) reste entier.
+
 ## 8. Questions ouvertes
 
 - **`APOInitSystemEffects3`** (Win11 22H2+) : layout différent de SE2 — le
