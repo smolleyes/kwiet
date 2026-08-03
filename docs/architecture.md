@@ -549,8 +549,31 @@ Trois changements ont été appliqués en séquence sans mesure fiable entre eux
 RAW réintroduit dans les modes, `IAudioProcessingObjectPreferredFormatSupport`
 retirée du QI, et `u32NumAPOInterfaces` ramené de 3 à **1** pour s'aligner sur
 Voice Clarity et Aec3APO. **On ne sait pas lequel est décisif**, et vu les faux
-négatifs, il est possible que le blocage ait cédé plus tôt. À bisecter si la
-question se repose.
+négatifs, il est possible que le blocage ait cédé plus tôt.
+
+Un quatrième candidat a en revanche été **éliminé par la mesure** : retirer
+`IApoAcousticEchoCancellation` ne change rien, le flux de Meet continue de
+passer par l'APO. Se déclarer annuleur d'écho n'était donc pas nécessaire.
+
+### Décision : Kwiet ne fait pas d'annulation d'écho ✅
+
+Réclamer `IApoAcousticEchoCancellation` fait **désactiver à Chrome son propre
+AEC3**, l'annuleur de WebRTC, qui est état de l'art. Le remplacer par ce qu'on
+pourrait livrer (SpeexDSP) serait une régression nette pour l'utilisateur et
+ses interlocuteurs. Le métier de Kwiet est la suppression de bruit ; l'écho
+revient à l'application, qui le fait mieux.
+
+Les interfaces d'entrée auxiliaire sont **conservées** : le flux de référence
+ne coûte rien et sert au diagnostic (`refFrames` dans le log).
+
+Conséquence pratique : tout le chantier SpeexDSP est annulé. Pour mémoire, il
+aurait fallu vendorer les sources C et écrire un build `cc` maison — le module
+`echo` du crate `speexdsp` est entièrement derrière la feature `sys`, et
+`speexdsp-sys` passe par autotools et pkg-config, inutilisables sur MSVC.
+
+> ⚖️ **Licence** : le dépôt Aec3APO ne contient **aucun fichier de licence**,
+> donc tous droits réservés. Son code peut être lu pour comprendre, jamais
+> copié ni dérivé. Il n'a servi que de témoin expérimental.
 
 Note : le graphe qui aboutit est initialisé en mode **DEFAULT**, pas
 COMMUNICATIONS — le traitement s'applique quand même au flux de Meet. Pourquoi,
