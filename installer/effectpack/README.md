@@ -32,9 +32,21 @@ Get-PnpDevice -Class AudioProcessingObject        # device « Kwiet » attendu
 > (`-RemoveCert`). La distribution passera par une signature attestation
 > (Partner Center).
 
-## Ce qui reste à valider
+## ⚠️ Étape indispensable après l'installation
 
-Le pack s'installe proprement (device OK, registre de classe conforme), mais
-les endpoints ne le référencent pas encore et la DLL n'est pas chargée.
-Prochaine étape : **redémarrage complet**, puis diff de notre
-`EffectPackRegistration` contre celle de Voice Clarity.
+Installer le pack ne l'active pas : il devient une **option** à choisir
+manuellement dans
+
+`Paramètres > Système > Son > [le micro] > Améliorations audio`
+
+où « Kwiet » apparaît à côté de « Voice Clarity » / des effets du fabricant.
+Un seul pack peut être actif par micro (« MEP » = *Multiple Effect Packs*).
+C'est `PKEY_FX_MEP_UserInterfaceClsid` dans l'INF qui rend le pack
+sélectionnable — sans cette valeur, il est installé mais invisible dans la
+liste.
+
+## Statut
+
+✅ Validé le 2026-08-03 sur Windows 11 build 26200 : APO chargé dans
+`audiodg.exe`, `LockForProcess` OK (2 ch / 48 kHz), 8 cycles Lock/Unlock sans
+fuite, audio transmis. Détails : [`../../docs/architecture.md`](../../docs/architecture.md) §8.

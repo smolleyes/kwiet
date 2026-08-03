@@ -7,7 +7,13 @@ L'utilisateur active un toggle : son micro réel est nettoyé par IA
 applications (Google Meet, Discord, …) — sans micro virtuel, sans sélection de
 périphérique.
 
-> **Statut : jalon 1 en cours** — APO passthrough stable. Aucun DSP encore.
+> **Statut : jalon 1 — APO passthrough chargé et actif** dans `audiodg.exe`
+> (Windows 11 build 26200, micro USB). Reste le soak 48 h et la matrice de
+> robustesse. Aucun DSP encore.
+>
+> L'installation se fait via un **pack d'effets** (INF composant + extension,
+> cf. [`installer/effectpack/`](installer/effectpack/)) — l'édition manuelle
+> des `FxProperties` par endpoint ne fonctionne plus sur Windows 11 récent.
 
 ## Architecture
 

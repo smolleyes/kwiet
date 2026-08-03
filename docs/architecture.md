@@ -203,6 +203,10 @@ montre pas).
 
 ### État de validation (2026-08-03)
 
+> ✅ **RÉSOLU (2026-08-03, 19h)** — voir « Sélection du pack » ci-dessous : il
+> manquait uniquement la sélection du pack dans l'UI Son. L'APO Kwiet est
+> désormais **chargé et actif** dans audiodg.
+
 Le pack Kwiet est **accepté et suivi par le système exactement comme celui de
 Microsoft** :
 
@@ -229,12 +233,49 @@ Deux constats qui réorientent le diagnostic :
   désactivation/réactivation des endpoints ne provoquent la matérialisation du
   pack Kwiet.
 
-Hypothèse de travail (à confirmer) : « MEP » = *Multiple Effect Packs*. Le
-choix du pack actif pour un endpoint serait une **sélection utilisateur**
-exposée par l'UI Son de Windows 11 (d'où l'obligation de déclarer
-`PKEY_FX_MEP_UserInterfaceClsid`), la sélection se matérialisant par la
-création de la sous-clé de contexte sur l'endpoint. Il ne manquerait donc plus
-qu'à choisir « Kwiet » dans Paramètres > Son > micro.
+### Sélection du pack — la pièce manquante ✅
+
+« MEP » = *Multiple Effect Packs*. Un pack installé n'est **pas** appliqué
+automatiquement : il devient une **option** dans
+`Paramètres > Système > Son > [micro] > Améliorations audio`, et l'utilisateur
+en choisit **un seul** par endpoint. C'est la raison d'être de
+`PKEY_FX_MEP_UserInterfaceClsid` : sans cette valeur, le pack n'est pas
+proposé dans la liste.
+
+Après sélection de « Kwiet » dans cette liste, l'endpoint reçoit :
+
+```
+FxProperties\{MFX_CONTEXT}\Default   <- description + état de l'effet
+FxProperties\{MFX_CONTEXT}\User      <- choix utilisateur
+FxProperties\{CLSID_APO},100 = SWD\DRIVERENUM\…#KwietEffectPack…
+```
+
+Ce qui explique aussi pourquoi Voice Clarity n'était matérialisé que sur le
+casque : c'était le pack sélectionné pour **cet** endpoint, et un seul pack
+peut l'être à la fois. En choisissant Kwiet, on le remplace (réversible via la
+même liste).
+
+### ✅ Jalon 1 atteint (2026-08-03, build 26200)
+
+Log dev de l'APO chargé dans `audiodg.exe`, sur le micro USB Plantronics :
+
+```
+LockForProcess: S_OK, 2 ch, 48000 Hz
+… (traitement) …
+UnlockForProcess
+KwietApo: instance destroyed
+```
+
+- **8 cycles Lock/Unlock** consécutifs, tous propres ;
+- **130 instances créées / 130 détruites** — aucune fuite de refcount ;
+- capture ffmpeg pendant que l'APO est actif : `mean_volume −63.7 dB`,
+  `max_volume −42.8 dB` → signal réel transmis, **pas de silence numérique**,
+  passthrough fonctionnel ;
+- aucun crash d'audiodg, audio système intact.
+
+Reste à faire pour clore formellement le jalon 1 : le soak 48 h et la matrice
+de robustesse (changement de sample rate, débranchement à chaud, veille/reprise,
+multi-applis) décrits dans `procedure-test-vm.md`.
 
 ## 8. Questions ouvertes
 
