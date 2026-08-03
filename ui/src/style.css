@@ -170,6 +170,45 @@ section {
   color: var(--ink-faint);
 }
 
+/* Only shown when there is something the user can actually go and fix. */
+.idle-action[hidden] {
+  display: none;
+}
+
+.idle-action {
+  margin-top: 4px;
+  padding: 6px 13px;
+  font-family: var(--font-label);
+  font-variation-settings: "wght" 500, "wdth" 87;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--ground);
+  background: var(--kept);
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: filter 150ms ease;
+}
+
+.idle-action:hover {
+  filter: brightness(1.08);
+}
+
+.idle-action:focus-visible {
+  outline: 2px solid var(--kept);
+  outline-offset: 2px;
+}
+
+/* The pack being unselected is the one failure the user must act on, so the
+   overlay borrows the amber that everywhere else means "removed". */
+.scope-idle.needs-action {
+  border-color: var(--removed-dim);
+}
+
+.scope-idle.needs-action .idle-title {
+  color: var(--removed);
+}
+
 .legend {
   display: flex;
   gap: 16px;

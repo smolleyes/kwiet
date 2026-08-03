@@ -11,10 +11,15 @@ const invoke = window.__TAURI__.core.invoke;
 const FLOOR_DB = -60;
 const HISTORY = 220; // samples kept on screen, ~9 s at 25 Hz
 const POLL_MS = 40;
+/** The pack only changes when somebody visits Windows settings. */
+const PACK_POLL_MS = 1000;
 
 const el = {
   scope: document.getElementById("scope"),
   scopeIdle: document.getElementById("scopeIdle"),
+  idleTitle: document.getElementById("idleTitle"),
+  idleBody: document.getElementById("idleBody"),
+  idleAction: document.getElementById("idleAction"),
   dot: document.getElementById("dot"),
   stateText: document.getElementById("stateText"),
   removed: document.getElementById("removed"),
@@ -28,6 +33,8 @@ const el = {
 
 const ctx = el.scope.getContext("2d");
 const history = [];
+/** Last known effect-pack state; null until the first poll answers. */
+let pack = null;
 /** Smoothed figure, so the readout does not flicker on every frame. */
 let removedSmoothed = 0;
 /** Set while dragging, so polling does not fight the user's hand. */
@@ -100,13 +107,71 @@ function drawScope() {
   ctx.fill();
 }
 
+/** The microphone's name, or a neutral stand-in when Windows gives none. */
+const micName = (name) => (name ? `« ${name} »` : "ton micro");
+
+/**
+ * What to say over the scope when no signal is coming through.
+ *
+ * Ordered from the thing that blocks everything to the thing that is merely
+ * waiting, so the user is always told the *first* reason nothing is happening.
+ * The middle two are the trap Windows sets: the pack installs without a word,
+ * stays switched off until somebody picks it in Settings, and nothing in the
+ * audio stack ever mentions it.
+ */
+function idleState() {
+  if (!pack) {
+    return {
+      title: "Aucun micro actif",
+      body: "Ouvre une application qui écoute ton micro pour voir le signal.",
+    };
+  }
+  if (!pack.installed) {
+    return {
+      title: "Pack d'effets absent",
+      body: "Windows n'a pas le pack Kwiet. Réinstalle Kwiet, puis choisis-le dans les paramètres du micro.",
+    };
+  }
+  if (!pack.selectedOnDefault && pack.selectedElsewhere.length > 0) {
+    return {
+      title: "Choisi sur le mauvais micro",
+      body: `Kwiet est en place sur « ${pack.selectedElsewhere[0]} », mais les applications reçoivent ${micName(pack.defaultDevice)}.`,
+      action: true,
+    };
+  }
+  if (!pack.selectedOnDefault) {
+    return {
+      title: "Kwiet n'est pas encore choisi",
+      body: `Le pack est installé, mais Windows ne s'en sert pas. Ouvre ${micName(pack.defaultDevice)} dans les paramètres du son, puis choisis Kwiet sous « Améliorations audio ».`,
+      action: true,
+    };
+  }
+  return {
+    title: "Aucune application n'utilise le micro",
+    body: `Kwiet est en place sur ${micName(pack.defaultDevice)} et attend. Ouvre une application qui écoute le micro.`,
+  };
+}
+
 function renderState(s) {
   const live = s.present && s.streaming;
   el.scopeIdle.hidden = live;
 
+  const idle = live ? null : idleState();
+  if (idle) {
+    el.idleTitle.textContent = idle.title;
+    el.idleBody.textContent = idle.body;
+    el.idleAction.hidden = !idle.action;
+    el.scopeIdle.classList.toggle("needs-action", Boolean(idle.action));
+  }
+
   el.dot.className = "dot";
   if (!live) {
-    el.stateText.textContent = "en veille";
+    if (idle.action) {
+      el.dot.classList.add("bypass");
+      el.stateText.textContent = "non configuré";
+    } else {
+      el.stateText.textContent = "en veille";
+    }
   } else if (!s.enabled) {
     el.dot.classList.add("bypass");
     el.stateText.textContent = "contourné";
@@ -180,6 +245,18 @@ async function tick() {
   drawScope();
 }
 
+async function pollPack() {
+  try {
+    pack = await invoke("pack_status");
+  } catch {
+    // Keep the previous answer rather than flashing a wrong one.
+  }
+}
+
+el.idleAction.addEventListener("click", () => {
+  invoke("open_microphone_settings");
+});
+
 el.slider.addEventListener("pointerdown", () => {
   sliderHeld = true;
 });
@@ -204,5 +281,7 @@ window.addEventListener("resize", () => {
 
 resizeScope();
 updateSliderChrome();
+pollPack();
 tick();
 setInterval(tick, POLL_MS);
+setInterval(pollPack, PACK_POLL_MS);

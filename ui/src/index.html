@@ -19,8 +19,13 @@
       <section class="scope" aria-label="Historique du signal">
         <canvas id="scope" width="656" height="240"></canvas>
         <div class="scope-idle" id="scopeIdle" hidden>
-          <p class="idle-title">Aucun micro actif</p>
-          <p class="idle-body">Ouvre une application qui écoute ton micro pour voir le signal.</p>
+          <p class="idle-title" id="idleTitle">Aucun micro actif</p>
+          <p class="idle-body" id="idleBody">
+            Ouvre une application qui écoute ton micro pour voir le signal.
+          </p>
+          <button type="button" class="idle-action" id="idleAction" hidden>
+            Ouvrir les paramètres du son
+          </button>
         </div>
         <div class="legend">
           <span class="key key-removed">bruit retiré</span>

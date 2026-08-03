@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod control;
+mod pack;
 mod settings;
 
 use std::sync::Mutex;
@@ -10,19 +11,55 @@ use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Manager, State, WindowEvent};
+use windows::core::w;
+use windows::Win32::UI::Shell::ShellExecuteW;
+use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
 use control::{ControlHandle, Snapshot};
+use pack::PackStatus;
 use settings::Settings;
 
 struct AppState {
     control: Mutex<ControlHandle>,
     settings: Mutex<Settings>,
+    /// Refreshed by a background thread: it costs a registry sweep plus a COM
+    /// call, which is too much to run at the meter's frame rate.
+    pack: Mutex<PackStatus>,
 }
 
 #[tauri::command]
 fn snapshot(state: State<'_, AppState>) -> Snapshot {
     let mut control = state.control.lock().expect("control lock");
     control.snapshot()
+}
+
+#[tauri::command]
+fn pack_status(state: State<'_, AppState>) -> PackStatus {
+    state.pack.lock().expect("pack lock").clone()
+}
+
+/// Opens the Sound page, the only place Windows 11 lets an effect pack be
+/// chosen.
+///
+/// Deliberately not `ms-settings:sound-defaultinputproperties`, which sounds
+/// like the exact page we want and is not: on Windows 11 26200 it opens a
+/// properties page for a phantom device titled "Null description", with no
+/// enhancements section at all. `ms-settings:sound` lands on the Sound page,
+/// where the microphone is one click away, and it works.
+#[tauri::command]
+fn open_microphone_settings() {
+    // SAFETY: constant, NUL-terminated strings. Fire and forget: if Settings
+    // refuses to open there is nothing useful left to tell the user.
+    unsafe {
+        let _ = ShellExecuteW(
+            None,
+            w!("open"),
+            w!("ms-settings:sound"),
+            None,
+            None,
+            SW_SHOWNORMAL,
+        );
+    }
 }
 
 #[tauri::command]
@@ -68,6 +105,21 @@ fn main() {
             app.manage(AppState {
                 control: Mutex::new(ControlHandle::default()),
                 settings: Mutex::new(settings),
+                pack: Mutex::new(PackStatus::default()),
+            });
+
+            // Installed-but-not-selected is invisible from inside the audio
+            // stack, so it has to be polled from outside it. Slowly: the answer
+            // only changes when somebody visits Settings.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                pack::init_com_for_thread();
+                loop {
+                    let status = pack::status();
+                    let state: State<'_, AppState> = handle.state();
+                    *state.pack.lock().expect("pack lock") = status;
+                    std::thread::sleep(Duration::from_secs(2));
+                }
             });
 
             // The control block only lives for the duration of a stream, and a
@@ -101,8 +153,13 @@ fn main() {
             let quit = MenuItem::with_id(app, "quit", "Quitter", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &separator, &quit])?;
 
+            // A dedicated tray cut: transparent, and drawn without the splinter
+            // field, which turns to mud below 24 px. The window icon keeps its
+            // dark tile, which is right for the taskbar and wrong for the tray.
+            let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.ico"))?;
+
             TrayIconBuilder::with_id("kwiet")
-                .icon(app.default_window_icon().expect("window icon").clone())
+                .icon(tray_icon)
                 .tooltip("Kwiet — nettoyage du micro")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
@@ -135,6 +192,8 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             snapshot,
+            pack_status,
+            open_microphone_settings,
             set_enabled,
             set_aggressiveness
         ])

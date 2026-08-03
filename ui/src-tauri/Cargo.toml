@@ -11,15 +11,22 @@ publish = false
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "image-ico"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+winreg = "0.55"
 
 [dependencies.windows]
 version = "0.58"
 features = [
     "Win32_Foundation",
     "Win32_System_Memory",
+    # Which microphone Windows actually hands to applications.
+    "Win32_System_Com",
+    "Win32_Media_Audio",
+    # Opening the Settings page where the effect pack is chosen.
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
 ]
 
 [profile.release]
