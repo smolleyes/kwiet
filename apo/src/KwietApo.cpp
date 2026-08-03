@@ -137,9 +137,16 @@ HRESULT KwietApo::Inner::QueryInterface(REFIID riid, void** ppvObject)
     } else if (riid == __uuidof(IApoAuxiliaryInputRT)) {
         KWIET_LOG("QI ok: IApoAuxiliaryInputRT");
         *ppvObject = static_cast<IApoAuxiliaryInputRT*>(&o);
-    } else if (riid == __uuidof(IApoAcousticEchoCancellation)) {
-        KWIET_LOG("QI ok: IApoAcousticEchoCancellation");
-        *ppvObject = static_cast<IApoAcousticEchoCancellation*>(&o);
+        // IApoAcousticEchoCancellation is deliberately NOT offered.
+        //
+        // Claiming it makes Chrome switch its own echo canceller off and rely
+        // on ours -- and WebRTC's AEC3 is far better than anything we would
+        // ship. Kwiet's job is noise suppression; echo cancellation is best
+        // left to the application. The auxiliary-input interfaces stay: the
+        // reference stream costs nothing and is useful for diagnostics.
+        //
+        // Whether this marker is what got us into the pipe is exactly what this
+        // build tests: three changes landed at once and none was measured alone.
     } else {
 #if defined(KWIET_DEV_LOG)
         char g[40];
