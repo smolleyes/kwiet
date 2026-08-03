@@ -517,7 +517,46 @@ mesurer le plancher de bruit, puis 7 s de parole. Même protocole dans les deux
 - **Qualité sur la voix** : tout ce qui précède mesure la suppression de bruit
   pur. L'effet sur la parole (et le bench AGC Chrome du jalon 3) reste entier.
 
-## 11. ⚠️ Chrome contourne l'APO (`WASAPIRawAudioCapture`)
+## 11bis. ✅ RÉSOLU — Kwiet traite bien le micro dans Google Meet
+
+**Preuve fonctionnelle, obtenue depuis Meet lui-même :** l'indicateur de niveau
+de Meet réagit à la voix mais **plus au sifflement**, alors qu'il y réagissait
+avant l'installation. DeepFilterNet3 préserve la parole et supprime le reste :
+un sifflement n'est pas de la parole, il est retiré. Le traitement est donc
+appliqué au flux que Meet reçoit.
+
+Confirmé côté APO : `LockForProcess` sans `Unlock` (graphe verrouillé en
+permanence), `flux=actif` dans le bloc de contrôle, VU d'entrée qui suit la
+parole et sortie écrasée dans les silences, `underruns=0`.
+
+### Deux erreurs de méthode qui ont coûté des heures
+
+1. **« 0 nouvelle ligne de log » ne prouve rien.** L'APO ne journalise qu'aux
+   transitions (Initialize, Lock, Unlock) : un flux **déjà verrouillé** n'écrit
+   plus rien tant qu'il tourne. Compter les lignes ajoutées sur une fenêtre de
+   8 s a donc produit des faux négatifs répétés. Le bon indicateur est
+   `streaming` dans le bloc de contrôle — c'est-à-dire le panneau lui-même.
+2. **« DLL chargée dans audiodg » ne prouve rien non plus** : une DLL reste
+   mappée après usage. C'est ce qui a rendu le verdict sur Aec3APO peu fiable
+   (même s'il allait dans le bon sens).
+
+L'utilisateur avait raison avant moi : « tant qu'on ne voit pas un flux ouvert
+dans le tray, ça ne marche pas » était le bon instrument depuis le début.
+
+### Ce qui a débloqué (avec une réserve honnête)
+
+Trois changements ont été appliqués en séquence sans mesure fiable entre eux :
+RAW réintroduit dans les modes, `IAudioProcessingObjectPreferredFormatSupport`
+retirée du QI, et `u32NumAPOInterfaces` ramené de 3 à **1** pour s'aligner sur
+Voice Clarity et Aec3APO. **On ne sait pas lequel est décisif**, et vu les faux
+négatifs, il est possible que le blocage ait cédé plus tôt. À bisecter si la
+question se repose.
+
+Note : le graphe qui aboutit est initialisé en mode **DEFAULT**, pas
+COMMUNICATIONS — le traitement s'applique quand même au flux de Meet. Pourquoi,
+reste une curiosité non élucidée, plus un blocage.
+
+## 11. Chrome et le contournement des APO (historique du diagnostic)
 
 **Constat, 2026-08-04.** Pendant un Google Meet, le panneau affichait « aucun
 micro actif ». Diagnostic :

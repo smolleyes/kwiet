@@ -216,7 +216,11 @@ HRESULT KwietApo::GetRegistrationProperties(APO_REG_PROPERTIES** ppRegProps)
     }
     *ppRegProps = nullptr;
 
-    constexpr UINT32 kNumInterfaces = 3;
+    // ONE interface, not three. Both references that work -- Voice Clarity and
+    // Aec3APO -- declare exactly `IAudioProcessingObject` here, and both their
+    // INFs say NumAPOInterfaces=1. Declaring three made the runtime properties
+    // disagree with our own catalogue, which says 1.
+    constexpr UINT32 kNumInterfaces = 1;
     const size_t cb = sizeof(APO_REG_PROPERTIES) + (kNumInterfaces - 1) * sizeof(IID);
     auto* props = static_cast<APO_REG_PROPERTIES*>(CoTaskMemAlloc(cb));
     if (props == nullptr) {
@@ -244,8 +248,6 @@ HRESULT KwietApo::GetRegistrationProperties(APO_REG_PROPERTIES** ppRegProps)
     props->u32MaxInstances = 0xFFFFFFFF;
     props->u32NumAPOInterfaces = kNumInterfaces;
     props->iidAPOInterfaceList[0] = __uuidof(IAudioProcessingObject);
-    props->iidAPOInterfaceList[1] = __uuidof(IAudioProcessingObjectRT);
-    props->iidAPOInterfaceList[2] = __uuidof(IAudioProcessingObjectConfiguration);
 
     *ppRegProps = props;
     return S_OK;

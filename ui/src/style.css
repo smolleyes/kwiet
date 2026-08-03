@@ -134,6 +134,12 @@ section {
   border-radius: 3px;
 }
 
+/* `display: flex` beats the browser's `[hidden] { display: none }`, so the
+   overlay has to opt out explicitly — otherwise it covers the scope forever. */
+.scope-idle[hidden] {
+  display: none;
+}
+
 .scope-idle {
   position: absolute;
   inset: 14px 16px 22px;
