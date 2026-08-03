@@ -9,16 +9,27 @@ namespace {
 // Who may touch the control block:
 //   SY  LOCAL SYSTEM            full
 //   BA  Administrators          full
-//   AU  Authenticated Users     query + map read + map write
+//   LS  LOCAL SERVICE           full   (audiodg runs as a service account)
+//   NS  NETWORK SERVICE         full
+//   AU  Authenticated Users     SECTION_ALL_ACCESS
 // plus a Medium mandatory label, without which the default High label would
 // stop a normal (medium integrity) UI process from writing.
+//
+// SECTION_ALL_ACCESS rather than just map-read/map-write, because whoever gets
+// here second has to *open* the object, and CreateFileMapping asks for full
+// section access when the name already exists. With a narrower grant, the APO
+// fails with ERROR_ACCESS_DENIED as soon as the UI holds the section open --
+// which is exactly what the UI does to keep settings alive between streams.
+// The looser right costs nothing: anyone who can map the page read-write
+// already controls its contents entirely.
 //
 // THREAT MODEL: any medium-integrity process in the user's session can toggle
 // the effect and change the aggressiveness. That is a nuisance, not an
 // escalation -- no pointer, size or length crosses this boundary, and every
 // value is clamped on read. Tighten to INTERACTIVE or a dedicated group if the
 // product ever needs it.
-constexpr wchar_t kSddl[] = L"D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x0007;;;AU)S:(ML;;NW;;;ME)";
+constexpr wchar_t kSddl[] =
+    L"D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;LS)(A;;FA;;;NS)(A;;0xF001F;;;AU)S:(ML;;NW;;;ME)";
 
 } // namespace
 
@@ -40,11 +51,24 @@ bool ControlShm::Open()
     const DWORD createError = GetLastError();
     LocalFree(sa.lpSecurityDescriptor);
 
+    bool alreadyExisted = (createError == ERROR_ALREADY_EXISTS);
+
     if (m_mapping == nullptr) {
         KWIET_LOG("ControlShm: CreateFileMapping failed, err=%lu", createError);
-        return false;
+        // A section left over from an older build carries the old, too narrow
+        // ACL, so create-or-open is refused. Opening with only the rights we
+        // actually need still works, and the stale section disappears once its
+        // last holder exits.
+        m_mapping = OpenFileMappingW(FILE_MAP_READ | FILE_MAP_WRITE, FALSE, KWIET_CONTROL_NAME);
+        if (m_mapping == nullptr) {
+            KWIET_LOG("ControlShm: OpenFileMapping fallback failed, err=%lu", GetLastError());
+            return false;
+        }
+        // Reached only when the section was already there, so it must NOT be
+        // re-initialised: the UI's settings live in it.
+        alreadyExisted = true;
+        KWIET_LOG("ControlShm: joined a pre-existing section through the fallback");
     }
-    const bool alreadyExisted = (createError == ERROR_ALREADY_EXISTS);
 
     m_block = static_cast<KwietControlBlock*>(
         MapViewOfFile(m_mapping, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, sizeof(KwietControlBlock)));

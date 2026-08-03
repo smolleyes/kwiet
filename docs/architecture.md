@@ -138,6 +138,18 @@ ordinaire.
 Banc d'essai : `bench/kwiet-control.ps1` lit et pilote le bloc **sans
 élévation** — c'est ce qui valide l'ACL en pratique.
 
+> ⚠️ **Piège corrigé le 2026-08-04.** L'ACL initiale n'accordait aux
+> utilisateurs que `0x0007` (query + map read + map write). Tant que la section
+> n'existait pas, l'APO la **créait** et tout fonctionnait. Dès que l'UI la
+> garde ouverte — ce qu'elle fait exprès pour préserver les réglages entre deux
+> flux — l'APO doit l'**ouvrir**, et `CreateFileMapping` réclame alors
+> `SECTION_ALL_ACCESS` : `ERROR_ACCESS_DENIED`, plus de plan de contrôle
+> (`control=0` dans le log). Corrigé en accordant `SECTION_ALL_ACCESS` aux
+> utilisateurs authentifiés et le contrôle total aux comptes de service, plus
+> un repli sur `OpenFileMapping` pour les sections héritées d'une version
+> antérieure. Le droit plus large ne coûte rien : qui peut mapper la page en
+> lecture/écriture en maîtrise déjà tout le contenu.
+
 ### ✅ Validé sur machine (2026-08-03)
 
 Depuis un processus utilisateur **non élevé**, flux de capture actif :
@@ -565,6 +577,37 @@ Deux enseignements décisifs :
    système actifs — dès qu'il veut l'**AEC système**. Le commentaire du code
    nomme Voice Clarity : ce chemin existe précisément pour que les effets de
    Microsoft fonctionnent.
+
+### ✅ Cause réelle trouvée : le pipe COMMUNICATIONS nous éjecte
+
+La piste A a été testée (RAW retiré de nos modes déclarés) et n'a rien changé —
+l'endpoint continue d'annoncer RAW, qui vient donc du pilote et non de nous.
+Mais le log a livré la vraie explication. **L'APO *est* instancié pour le flux
+de Chrome, en mode COMMUNICATIONS, et il est détruit avant `LockForProcess` :**
+
+```
+Initialize: SE3, mode={98951333-...COMMUNICATIONS}, discoveryOnly=0
+Initialize: S_OK
+QI: E_NOINTERFACE for {4CEB0AAB-...}   IApoAuxiliaryInputConfiguration
+QI: E_NOINTERFACE for {25385759-...}   IApoAcousticEchoCancellation
+QI: E_NOINTERFACE for {F235855F-...}   IApoAcousticEchoCancellation2
+GetPreferredOutputFormat -> E_NOTIMPL
+KwietApo: instance destroyed            <-- pas de LockForProcess
+```
+
+Les instances en mode DEFAULT, elles, atteignent `LockForProcess` normalement
+(171 instanciations DEFAULT contre 21 COMMUNICATIONS, aucune de ces dernières
+n'aboutissant).
+
+**Ce n'est donc pas Chrome qui nous contourne : c'est le moteur audio qui nous
+refuse le pipe communications parce que nous ne fournissons pas d'AEC.** Chrome
+ouvre en `AudioCategory_Communications` ; ce pipe attend un APO capable
+d'annulation d'écho, et Voice Clarity en est un (son INF déclare
+`APO_FLAG_AEC`). Cela explique aussi le commentaire du code Chromium : le
+chemin « system AEC » existe pour ces effets-là.
+
+Toutes les applications de visioconférence ouvrant en catégorie communications,
+c'est **le** verrou produit.
 
 ### Deux pistes, par ordre de coût
 
