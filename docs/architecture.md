@@ -181,27 +181,60 @@ Signature : `pnputil /add-driver` accepte un package signé par un certificat
 test signing (validé sur cette machine). La distribution passera par une
 signature attestation Partner Center.
 
+### Cycle de vie observé (trace procmon, build 26200)
+
+Au démarrage d'AudioEndpointBuilder, pour **chaque** pack installé (Voice
+Clarity et Kwiet sont traités à l'identique) :
+
+1. énumération de `...\Class\{5989fce8-…}\NNNN\EffectPackRegistration` ;
+2. lecture complète des `FxProperties` du pack (association, enumerator,
+   apply-to-capture, exclude-HWIDs, modes, MFX/composite CLSID, UI CLSID —
+   toutes en SUCCESS) ;
+3. inscription dans un registre central des packs :
+   **`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\EffectsPacks\{EFFECT_CLSID}`**
+   avec `{D04E05A6-…},27` = InstanceId du devnode `SWD\DRIVERENUM\…` et
+   `{D04E05A6-…},28` = 0.
+
+Un pack **appliqué** à un endpoint se matérialise ensuite en **sous-clé** de
+`MMDevices\Audio\Capture\{endpoint}\FxProperties` nommée d'après le
+`MFX_CONTEXT` du pack, contenant `Default` et `User` (attention : ce sont des
+sous-clés, pas des valeurs — un `Get-ItemProperty` sur `FxProperties` ne les
+montre pas).
+
 ### État de validation (2026-08-03)
 
-`installer/effectpack/sign-install-dev.ps1` installe le pack sans erreur :
-device `SWD\DRIVERENUM\{...}#KWIETEFFECTPACK` présent et **OK**, composant
-enregistré en `...\Class\{5989fce8-…}\0005` avec les trois sous-clés
-(`AudioEngine`, `Classes`, `EffectPackRegistration`) — structure identique à
-Voice Clarity en `0001`. **Mais** aucun endpoint ne référence encore le CLSID
-Kwiet et la DLL n'est pas chargée. Reste à tester, dans l'ordre :
+Le pack Kwiet est **accepté et suivi par le système exactement comme celui de
+Microsoft** :
 
-1. **redémarrage complet** (AudioEndpointBuilder n'évalue probablement les
-   packs qu'à la construction des endpoints — un `pnputil /scan-devices` +
-   restart de service n'a pas suffi) ;
-2. si insuffisant : comparer finement notre `EffectPackRegistration` à celle de
-   Voice Clarity (`reg export` des deux sous-arbres, diff) ;
-3. vérifier si le moteur exige une signature d'éditeur particulière pour
-   *appliquer* un pack (au-delà de l'acceptation du package par pnputil).
+| Vérification | Kwiet | Voice Clarity |
+|---|---|---|
+| `pnputil /add-driver` (certificat auto-signé, sans test signing) | OK | — |
+| devnode `SWD\DRIVERENUM\…#…EFFECTPACK` | OK | OK |
+| composant `Class\{5989fce8-…}\NNNN` + 3 sous-clés | `0005` | `0001` |
+| `EffectPackRegistration` lue intégralement par AudioEndpointBuilder | oui | oui |
+| inscription dans `MMDevices\EffectsPacks\{CLSID}` (`,27`/`,28`) | oui | oui |
+| **contexte matérialisé sur un endpoint** | **non** | oui (casque uniquement) |
+| DLL chargée dans audiodg | non | **non plus** |
 
-> ⚠️ Effet de bord constaté : le marqueur `{9E6136E0-…},100` de Voice Clarity a
-> disparu de l'endpoint casque après nos écritures manuelles de FxProperties.
-> Un redémarrage devrait le faire réécrire par AudioEndpointBuilder ; à
-> vérifier explicitement.
+Deux constats qui réorientent le diagnostic :
+
+- `voiceclaritycpuapo.dll` **n'est pas chargée non plus** pendant un flux de
+  capture sur le casque, alors que les APO Realtek le sont (via la chaîne
+  `CompositeFX` classique de l'endpoint). Le pack de Microsoft est donc
+  *installé et sélectionné* mais son APO n'est pas actif — l'effet est
+  vraisemblablement désactivé côté utilisateur.
+- Voice Clarity n'est matérialisé que sur **un seul** endpoint (le casque),
+  jamais sur le micro interne, alors que ses règles d'association couvrent les
+  deux. Ni un redémarrage, ni `pnputil /scan-devices`, ni un cycle
+  désactivation/réactivation des endpoints ne provoquent la matérialisation du
+  pack Kwiet.
+
+Hypothèse de travail (à confirmer) : « MEP » = *Multiple Effect Packs*. Le
+choix du pack actif pour un endpoint serait une **sélection utilisateur**
+exposée par l'UI Son de Windows 11 (d'où l'obligation de déclarer
+`PKEY_FX_MEP_UserInterfaceClsid`), la sélection se matérialisant par la
+création de la sous-clé de contexte sur l'endpoint. Il ne manquerait donc plus
+qu'à choisir « Kwiet » dans Paramètres > Son > micro.
 
 ## 8. Questions ouvertes
 

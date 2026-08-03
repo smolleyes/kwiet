@@ -9,7 +9,7 @@ Signature   = "$WINDOWS NT$"
 Class       = AudioProcessingObject
 ClassGuid   = {5989fce8-9cd0-467d-8a6a-5419e31529d4}
 Provider    = %ProviderName%
-DriverVer   = 08/03/2026,0.1.0.0
+DriverVer   = 08/03/2026,0.1.1.0
 CatalogFile = kwiet.cat
 PnpLockDown = 1
 
@@ -56,6 +56,10 @@ HKR,,FriendlyName,,%Apo.ComponentDesc%
 HKR,EffectPackRegistration\%EFFECT_CLSID%,%PKEY_FX_EffectPackSchema_Version%, ,%PKEY_FX_EffectPack_Schema_Internal_V1%
 HKR,EffectPackRegistration\%EFFECT_CLSID%,%PKEY_ItemNameDisplay%, ,%Effect_Pack_FriendlyName%
 HKR,EffectPackRegistration\%EFFECT_CLSID%,%PKEY_FX_Author%, ,%Effect_Pack_Author%
+; UI ("settings manager") CLSID : présent chez Voice Clarity et Aec3APO, absent
+; de notre première version — seule différence structurelle constatée quand le
+; pack n'était pas appliqué aux endpoints.
+HKR,EffectPackRegistration\%EFFECT_CLSID%,%PKEY_FX_MEP_UserInterfaceClsid%,%REG_SZ%,%HSA_COM_CLASS_CLSID%
 HKR,EffectPackRegistration\%EFFECT_CLSID%,%PKEY_FX_VersionMajor%,%REG_DWORD%,0
 HKR,EffectPackRegistration\%EFFECT_CLSID%,%PKEY_FX_VersionMinor%,%REG_DWORD%,1
 HKR,EffectPackRegistration\%EFFECT_CLSID%\FxProperties,%PKEY_FX_ApplyToCapture%,%REG_DWORD%,1
@@ -68,6 +72,14 @@ HKR,EffectPackRegistration\%EFFECT_CLSID%\FxProperties,%PKEY_FX_ModeEffectClsid%
 HKR,EffectPackRegistration\%EFFECT_CLSID%\FxProperties,%PKEY_CompositeFX_ModeEffectClsid%,%REG_MULTI_SZ%,%KWIET_FX_MODE_CLSID%
 HKR,EffectPackRegistration\%EFFECT_CLSID%\FxProperties,%PKEY_MFX_ProcessingModes_Supported_For_Streaming%,%REG_MULTI_SZ%,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%,%AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS%,%AUDIO_SIGNALPROCESSINGMODE_SPEECH%,%AUDIO_SIGNALPROCESSINGMODE_RAW%
 HKR,EffectPackRegistration\%EFFECT_CLSID%\FxProperties,%PKEY_FX_ExcludeForHWIDs%,%REG_MULTI_SZ%,"ROOT\*","*VirtualAudio*","*Virtual_Audio*","*VirtualDevice*"
+
+; Settings manager COM class (référencée par PKEY_FX_MEP_UserInterfaceClsid).
+; Milestone 1 : simple enregistrement, la classe n'est pas encore implémentée
+; dans la DLL — l'UI de réglage arrive au jalon 4.
+HKR,Classes\CLSID\%HSA_COM_CLASS_CLSID%,,,%HSA_FriendlyName%
+HKR,Classes\CLSID\%HSA_COM_CLASS_CLSID%\InProcServer32,,%REG_EXPAND_SZ%,%13%\KwietApo.dll
+HKR,Classes\CLSID\%HSA_COM_CLASS_CLSID%\InProcServer32,ThreadingModel,,"Both"
+HKR,Classes\CLSID\%HSA_COM_CLASS_CLSID%\Version,,,"1.0"
 
 [SourceDisksNames]
 1 = Disk
@@ -94,6 +106,7 @@ Apo.ComponentDesc = "Kwiet"
 EFFECT_CLSID        = "{BEF3EA28-8CB0-4857-A0D4-E33457926D1E}"
 KWIET_FX_MODE_CLSID = "{65D564E6-9709-4F5C-85CF-449D92949CFE}"
 KWIET_MFX_CONTEXT   = "{7EA00FEC-7CC0-475F-B8A9-9ADECC90E98C}"
+HSA_COM_CLASS_CLSID = "{920816DB-3145-4373-99C2-D19038AE8FDD}"
 
 ; APO_FLAG_INPLACE | APO_FLAG_SAMPLESPERFRAME_MUST_MATCH |
 ; APO_FLAG_FRAMESPERSECOND_MUST_MATCH | APO_FLAG_BITSPERSAMPLE_MUST_MATCH
@@ -102,6 +115,7 @@ APO_MFX_FriendlyName     = "Kwiet Passthrough APO"
 Copyright                = "Copyright (c) 2026 Kwiet contributors (Apache-2.0)"
 Effect_Pack_FriendlyName = "Kwiet"
 Effect_Pack_Author       = "Kwiet contributors"
+HSA_FriendlyName         = "Kwiet Settings manager"
 
 KSNODETYPE_MICROPHONE                     = "{DFF21BE1-F70F-11D0-B917-00A0C9223196}"
 KSNODETYPE_DESKTOP_MICROPHONE             = "{DFF21BE2-F70F-11D0-B917-00A0C9223196}"
@@ -127,6 +141,7 @@ PKEY_FX_Author                                   = "{D04E05A6-594B-4FB6-A80D-01A
 PKEY_FX_EffectPackSchema_Version                 = "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},29"
 PKEY_FX_ApplyToCapture                           = "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},33"
 PKEY_FX_EffectPack_Schema_Internal_V1            = "{7abf23d9-727e-4d0b-86a3-dd501d260101}"
+PKEY_FX_MEP_UserInterfaceClsid                   = "{54B4320D-B63A-43AC-B1F0-6D26FCC6EDE8},0"
 PKEY_FX_ExcludeForHWIDs                          = "{6473F77A-DF09-41C9-B608-2D2420EA634F},2"
 PKEY_MFX_ProcessingModes_Supported_For_Streaming = "{D3993A3F-99C2-4402-B5EC-A92A0367664B},6"
 PKEY_MFX_Kwiet_Effect_State                      = "{BD0ADC00-EFD2-4426-8D14-BCFF1AE2C014},1"
