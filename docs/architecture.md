@@ -505,6 +505,61 @@ mesurer le plancher de bruit, puis 7 s de parole. Même protocole dans les deux
 - **Qualité sur la voix** : tout ce qui précède mesure la suppression de bruit
   pur. L'effet sur la parole (et le bench AGC Chrome du jalon 3) reste entier.
 
+## 11. ⚠️ Chrome contourne l'APO (`WASAPIRawAudioCapture`)
+
+**Constat, 2026-08-04.** Pendant un Google Meet, le panneau affichait « aucun
+micro actif ». Diagnostic :
+
+| Vérification | Résultat |
+|---|---|
+| Le Plantronics capte-t-il ? | oui, pic à −58,3 dB (`IAudioMeterInformation`) |
+| Kwiet est-il sélectionné sur cet endpoint ? | oui |
+| L'APO est-il instancié ? | **non** — aucune ligne de log, `streaming=0` |
+| Un flux **normal** sur le **même** micro, **pendant** le Meet ? | **l'APO se charge** (32 lignes de log) |
+
+Donc ni l'endpoint, ni la sélection, ni l'APO ne sont en cause : c'est le flux
+de Chrome qui saute la chaîne d'effets.
+
+### Mécanisme
+
+Chromium active par défaut la fonctionnalité **`WASAPIRawAudioCapture`**, qui
+ouvre la capture avec
+[`AUDCLNT_STREAMOPTIONS_RAW`](https://learn.microsoft.com/en-us/windows/desktop/api/audioclient/ne-audioclient-audclnt_streamoptions).
+Ce drapeau « bypasses all signal processing except for endpoint specific,
+always-on processing » — donc tous les APO logiciels, y compris le nôtre et
+Voice Clarity de Microsoft. WebRTC veut du signal brut pour appliquer ses
+propres AEC/NS/AGC.
+
+### Contournement à tester
+
+```
+chrome.exe --disable-features=WASAPIRawAudioCapture
+```
+
+À lancer **toutes fenêtres Chrome fermées** (un commutateur ne s'applique qu'au
+démarrage du processus).
+
+### Ce que ça change pour le produit
+
+`docs/architecture.md` notait depuis le début « les flux exclusive/raw
+bypassent l'APO, c'est accepté ». Cette limite avait été acceptée **sans savoir
+que Chrome en fait partie** — or Chrome/Meet est le cas d'usage n°1 du produit.
+C'est donc une remise en cause sérieuse, découverte au moment où le jalon 3
+(bench Chrome) devait précisément l'examiner.
+
+Pistes, par ordre de préférence :
+
+1. **Le commutateur ci-dessus** — s'il fonctionne, reste à savoir s'il est
+   praticable pour un utilisateur ordinaire (raccourci modifié, stratégie
+   d'entreprise, ou rien du tout).
+2. **Vérifier les autres applications visées** (Discord, Teams, Zoom, Slack) :
+   elles n'utilisent pas toutes WebRTC de la même façon, et la question
+   « combien d'applis sont réellement couvertes » décide de la valeur du
+   produit.
+3. **Micro virtuel** — la solution qui fonctionne quoi qu'il arrive, mais elle
+   a été explicitement écartée au départ (« sans micro virtuel »). À rouvrir
+   seulement si 1 et 2 échouent.
+
 ## 8. Questions ouvertes
 
 - **`APOInitSystemEffects3`** (Win11 22H2+) : layout différent de SE2 — le
