@@ -1,0 +1,31 @@
+; Kwiet extension INF: creates the SWC child device on the generic computer
+; devnode; the AudioProcessingObject component INF then matches on it.
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = Extension
+ClassGuid   = {e2f84ce7-8efa-411c-aa69-97454ca4cb57}
+Provider    = %ProviderName%
+ExtensionId = {6A05FC42-1A06-48A3-907C-740F7F7CA2BF}
+PnpLockDown = 1
+DriverVer   = 08/03/2026,0.1.0.0
+CatalogFile = kwiet.cat
+
+[Manufacturer]
+%MfgName% = KwietExt,NTamd64
+
+[KwietExt.NTamd64]
+%Ext.DeviceDesc% = KwietExt_Install,COMPUTER\Generic
+
+[KwietExt_Install]
+
+[KwietExt_Install.Components]
+AddComponent = KwietEffectPack,,Kwiet_AddComponent
+
+[Kwiet_AddComponent]
+ComponentIDs = VEN_KWIET&AUDIO_EFFECTPACK_KWIET
+
+[Strings]
+MfgName         = "Kwiet contributors"
+ProviderName    = "Kwiet contributors"
+Ext.DeviceDesc  = "Kwiet Effect Pack"

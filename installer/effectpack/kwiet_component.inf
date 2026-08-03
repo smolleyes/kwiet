@@ -1,0 +1,143 @@
+; Kwiet audio effect pack component INF (AudioProcessingObject class).
+;
+; Modeled on Microsoft's Voice Clarity effect pack (voiceclarityep_audio_component.INF)
+; and the open-source Aec3APO project: the modern (Win11 24H2+) way to attach a
+; capture APO to every microphone, replacing per-endpoint FxProperties edits.
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = AudioProcessingObject
+ClassGuid   = {5989fce8-9cd0-467d-8a6a-5419e31529d4}
+Provider    = %ProviderName%
+DriverVer   = 08/03/2026,0.1.0.0
+CatalogFile = kwiet.cat
+PnpLockDown = 1
+
+[Manufacturer]
+%MfgName% = KwietComponent,NTamd64.10.0...26100
+
+[KwietComponent.NTamd64.10.0...26100]
+%Apo.ComponentDesc% = KwietComponent_Install, SWC\VEN_KWIET&AUDIO_EFFECTPACK_KWIET
+
+[KwietComponent_Install.NTamd64]
+AddReg    = KwietComponent_AddReg
+CopyFiles = KwietComponent_CopyFiles
+
+[KwietComponent_CopyFiles]
+KwietApo.dll
+
+[KwietComponent_Install.NTamd64.Services]
+AddService=,2    ; no function driver, install a null driver.
+
+[KwietComponent_AddReg]
+; APO COM registration (component-scoped, DLL lives in the DriverStore)
+HKR,Classes\CLSID\%KWIET_FX_MODE_CLSID%,,,%APO_MFX_FriendlyName%
+HKR,Classes\CLSID\%KWIET_FX_MODE_CLSID%\InProcServer32,,%REG_EXPAND_SZ%,%13%\KwietApo.dll
+HKR,Classes\CLSID\%KWIET_FX_MODE_CLSID%\InProcServer32,ThreadingModel,,"Both"
+
+; APO registration (component-scoped catalog)
+HKR,AudioEngine\AudioProcessingObjects\%KWIET_FX_MODE_CLSID%,"FriendlyName",,%APO_MFX_FriendlyName%
+HKR,AudioEngine\AudioProcessingObjects\%KWIET_FX_MODE_CLSID%,"Copyright",,%Copyright%
+HKR,AudioEngine\AudioProcessingObjects\%KWIET_FX_MODE_CLSID%,"MajorVersion",%REG_DWORD%,1
+HKR,AudioEngine\AudioProcessingObjects\%KWIET_FX_MODE_CLSID%,"MinorVersion",%REG_DWORD%,0
+HKR,AudioEngine\AudioProcessingObjects\%KWIET_FX_MODE_CLSID%,"Flags",%REG_DWORD%,%APO_FLAGS%
+HKR,AudioEngine\AudioProcessingObjects\%KWIET_FX_MODE_CLSID%,"MinInputConnections",%REG_DWORD%,1
+HKR,AudioEngine\AudioProcessingObjects\%KWIET_FX_MODE_CLSID%,"MaxInputConnections",%REG_DWORD%,1
+HKR,AudioEngine\AudioProcessingObjects\%KWIET_FX_MODE_CLSID%,"MinOutputConnections",%REG_DWORD%,1
+HKR,AudioEngine\AudioProcessingObjects\%KWIET_FX_MODE_CLSID%,"MaxOutputConnections",%REG_DWORD%,1
+HKR,AudioEngine\AudioProcessingObjects\%KWIET_FX_MODE_CLSID%,"MaxInstances",%REG_DWORD%,0xffffffff
+HKR,AudioEngine\AudioProcessingObjects\%KWIET_FX_MODE_CLSID%,"NumAPOInterfaces",%REG_DWORD%,1
+HKR,AudioEngine\AudioProcessingObjects\%KWIET_FX_MODE_CLSID%,"APOInterface0",,"{FD7F2B29-24D0-4B5C-B177-592C39F9CA10}"
+
+; Friendly Name
+HKR,,FriendlyName,,%Apo.ComponentDesc%
+
+; Effect pack registration (schema V1)
+HKR,EffectPackRegistration\%EFFECT_CLSID%,%PKEY_FX_EffectPackSchema_Version%, ,%PKEY_FX_EffectPack_Schema_Internal_V1%
+HKR,EffectPackRegistration\%EFFECT_CLSID%,%PKEY_ItemNameDisplay%, ,%Effect_Pack_FriendlyName%
+HKR,EffectPackRegistration\%EFFECT_CLSID%,%PKEY_FX_Author%, ,%Effect_Pack_Author%
+HKR,EffectPackRegistration\%EFFECT_CLSID%,%PKEY_FX_VersionMajor%,%REG_DWORD%,0
+HKR,EffectPackRegistration\%EFFECT_CLSID%,%PKEY_FX_VersionMinor%,%REG_DWORD%,1
+HKR,EffectPackRegistration\%EFFECT_CLSID%\FxProperties,%PKEY_FX_ApplyToCapture%,%REG_DWORD%,1
+HKR,EffectPackRegistration\%EFFECT_CLSID%\FxProperties,%PKEY_FX_Enumerator%,%REG_MULTI_SZ%,"*"
+HKR,EffectPackRegistration\%EFFECT_CLSID%\FxProperties,%PKEY_FX_Association%,%REG_MULTI_SZ%,%KSNODETYPE_MICROPHONE%,%KSNODETYPE_DESKTOP_MICROPHONE%,%KSNODETYPE_PERSONAL_MICROPHONE%,%KSNODETYPE_OMNI_DIRECTIONAL_MICROPHONE%,%KSNODETYPE_MICROPHONE_ARRAY%,%KSNODETYPE_PROCESSING_MICROPHONE_ARRAY%,%KSNODETYPE_HEADSET%,%KSNODETYPE_HFP_SIDEBAND_HEADSET%,%KSNODETYPE_HEADSET_MICROPHONE%,%KSNODETYPE_ECHO_CANCELING_SPEAKERPHONE%,%KSNODETYPE_ECHO_SUPPRESSING_SPEAKERPHONE%,%KSNODETYPE_SPEAKERPHONE_NO_ECHO_REDUCTION%
+HKR,EffectPackRegistration\%EFFECT_CLSID%\FxProperties\FX\0\%KWIET_MFX_CONTEXT%\Default,%PKEY_MFX_Kwiet_Effect_State%,%REG_DWORD%,0xffffffff
+HKR,EffectPackRegistration\%EFFECT_CLSID%\FxProperties\FX\0\%KWIET_MFX_CONTEXT%\Default,%PKEY_MFX_Kwiet_Default_Effect_Description%,%REG_SZ%,"Kwiet passthrough (milestone 1) - AI noise suppression arrives at milestone 2"
+HKR,EffectPackRegistration\%EFFECT_CLSID%\FxProperties\FX\0\%KWIET_MFX_CONTEXT%\User
+HKR,EffectPackRegistration\%EFFECT_CLSID%\FxProperties,%PKEY_FX_ModeEffectClsid%,,%KWIET_FX_MODE_CLSID%
+HKR,EffectPackRegistration\%EFFECT_CLSID%\FxProperties,%PKEY_CompositeFX_ModeEffectClsid%,%REG_MULTI_SZ%,%KWIET_FX_MODE_CLSID%
+HKR,EffectPackRegistration\%EFFECT_CLSID%\FxProperties,%PKEY_MFX_ProcessingModes_Supported_For_Streaming%,%REG_MULTI_SZ%,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%,%AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS%,%AUDIO_SIGNALPROCESSINGMODE_SPEECH%,%AUDIO_SIGNALPROCESSINGMODE_RAW%
+HKR,EffectPackRegistration\%EFFECT_CLSID%\FxProperties,%PKEY_FX_ExcludeForHWIDs%,%REG_MULTI_SZ%,"ROOT\*","*VirtualAudio*","*Virtual_Audio*","*VirtualDevice*"
+
+[SourceDisksNames]
+1 = Disk
+
+[SourceDisksFiles]
+KwietApo.dll = 1
+
+[DestinationDirs]
+KwietComponent_CopyFiles = 13 ; 13=Package's DriverStore directory
+
+[SignatureAttributes]
+KwietApo.dll = SignatureAttributes.PETrust
+
+[SignatureAttributes.PETrust]
+PETrust = true
+
+[Strings]
+MfgName           = "Kwiet contributors"
+ProviderName      = "Kwiet contributors"
+Apo.ComponentDesc = "Kwiet"
+
+; Effect pack + APO CLSIDs.
+; KWIET_FX_MODE_CLSID = CLSID_KwietApo (apo/src/KwietGuids.h) - keep in sync.
+EFFECT_CLSID        = "{BEF3EA28-8CB0-4857-A0D4-E33457926D1E}"
+KWIET_FX_MODE_CLSID = "{65D564E6-9709-4F5C-85CF-449D92949CFE}"
+KWIET_MFX_CONTEXT   = "{7EA00FEC-7CC0-475F-B8A9-9ADECC90E98C}"
+
+; APO_FLAG_INPLACE | APO_FLAG_SAMPLESPERFRAME_MUST_MATCH |
+; APO_FLAG_FRAMESPERSECOND_MUST_MATCH | APO_FLAG_BITSPERSAMPLE_MUST_MATCH
+APO_FLAGS                = 0x0000000f
+APO_MFX_FriendlyName     = "Kwiet Passthrough APO"
+Copyright                = "Copyright (c) 2026 Kwiet contributors (Apache-2.0)"
+Effect_Pack_FriendlyName = "Kwiet"
+Effect_Pack_Author       = "Kwiet contributors"
+
+KSNODETYPE_MICROPHONE                     = "{DFF21BE1-F70F-11D0-B917-00A0C9223196}"
+KSNODETYPE_DESKTOP_MICROPHONE             = "{DFF21BE2-F70F-11D0-B917-00A0C9223196}"
+KSNODETYPE_PERSONAL_MICROPHONE            = "{DFF21BE3-F70F-11D0-B917-00A0C9223196}"
+KSNODETYPE_OMNI_DIRECTIONAL_MICROPHONE    = "{DFF21BE4-F70F-11D0-B917-00A0C9223196}"
+KSNODETYPE_MICROPHONE_ARRAY               = "{DFF21BE5-F70F-11D0-B917-00A0C9223196}"
+KSNODETYPE_PROCESSING_MICROPHONE_ARRAY    = "{DFF21BE6-F70F-11D0-B917-00A0C9223196}"
+KSNODETYPE_HEADSET                        = "{DFF21DE2-F70F-11D0-B917-00A0C9223196}"
+KSNODETYPE_HFP_SIDEBAND_HEADSET           = "{A79D957D-5CD5-458A-B3F1-AF8E789B1F3B}"
+KSNODETYPE_HEADSET_MICROPHONE             = "{DFF21BE3-F70F-11D0-B917-00A0C9223196}"
+KSNODETYPE_ECHO_CANCELING_SPEAKERPHONE    = "{DFF21DE5-F70F-11D0-B917-00A0C9223196}"
+KSNODETYPE_ECHO_SUPPRESSING_SPEAKERPHONE  = "{DFF21DE4-F70F-11D0-B917-00A0C9223196}"
+KSNODETYPE_SPEAKERPHONE_NO_ECHO_REDUCTION = "{DFF21DE3-F70F-11D0-B917-00A0C9223196}"
+
+PKEY_ItemNameDisplay                             = "{B725F130-47EF-101A-A5F1-02608C9EEBAC},10"
+PKEY_FX_Association                              = "{D04E05A6-594B-4fb6-A80D-01AF5EED7D1D},0"
+PKEY_FX_ModeEffectClsid                          = "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},6"
+PKEY_CompositeFX_ModeEffectClsid                 = "{D04E05A6-594B-4fb6-A80D-01AF5EED7D1D},14"
+PKEY_FX_Enumerator                               = "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},23"
+PKEY_FX_VersionMajor                             = "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},24"
+PKEY_FX_VersionMinor                             = "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},25"
+PKEY_FX_Author                                   = "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},26"
+PKEY_FX_EffectPackSchema_Version                 = "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},29"
+PKEY_FX_ApplyToCapture                           = "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},33"
+PKEY_FX_EffectPack_Schema_Internal_V1            = "{7abf23d9-727e-4d0b-86a3-dd501d260101}"
+PKEY_FX_ExcludeForHWIDs                          = "{6473F77A-DF09-41C9-B608-2D2420EA634F},2"
+PKEY_MFX_ProcessingModes_Supported_For_Streaming = "{D3993A3F-99C2-4402-B5EC-A92A0367664B},6"
+PKEY_MFX_Kwiet_Effect_State                      = "{BD0ADC00-EFD2-4426-8D14-BCFF1AE2C014},1"
+PKEY_MFX_Kwiet_Default_Effect_Description        = "{BD0ADC00-EFD2-4426-8D14-BCFF1AE2C014},2"
+AUDIO_SIGNALPROCESSINGMODE_DEFAULT               = "{C18E2F7E-933D-4965-B7D1-1EEF228D2AF3}"
+AUDIO_SIGNALPROCESSINGMODE_COMMUNICATIONS        = "{98951333-B9CD-48B1-A0A3-FF40682D73F7}"
+AUDIO_SIGNALPROCESSINGMODE_SPEECH                = "{FC1CFC9B-B9D6-4CFA-B5E0-4BB2166878B2}"
+AUDIO_SIGNALPROCESSINGMODE_RAW                   = "{9E90EA20-B493-4FD1-A1A8-7E1361A956CF}"
+
+; reg type flags
+REG_SZ        = 0x00000000
+REG_MULTI_SZ  = 0x00010000
+REG_DWORD     = 0x00010001
+REG_EXPAND_SZ = 0x00020000

@@ -131,17 +131,77 @@ Séquence observée (log dev de la DLL + procmon) sur un endpoint de capture USB
    `{9e6136e0-...},100` sur l'endpoint) : les clés `CompositeFX` (`,13`/`,14`)
    ne sont qu'un reflet — les modifier à la main est sans effet sur le graphe.
 
-Hypothèse de travail : sur ce build (canal récent), l'insertion d'APO tiers
-« registry-only » dans les pipes de capture est refusée en fin de négociation ;
-le chemin officiel passe par un package d'effets (INF `AddSoftware` /
-DeviceExtension). À vérifier :
+Hypothèse confirmée : sur ce build, l'insertion d'APO tiers « registry-only »
+dans les pipes de capture est refusée en fin de négociation. Le chemin moderne
+est le **pack d'effets** — voir §8.
 
-- comportement identique ou non sur **Windows 11 stable (23H2/24H2) en VM** —
-  c'était la cible de test du jalon 1 ;
-- test témoin **Equalizer APO** sur la même machine (charge-t-il encore ?) ;
-- rétro-ingénierie de la déclaration du VocaEffectPack (clés sous
-  `HKLM\SYSTEM\...\Enum\SWD\DRIVERENUM`, INF associé) pour reproduire le
-  mécanisme.
+## 8. Pack d'effets (effect pack) — voie moderne ✅
+
+Rétro-ingénierie du pack **Voice Clarity** de Microsoft (`C:\Windows\INF\oem155.inf`,
+alias `voiceclarityep_audio_component.INF`) et confrontation au projet open
+source [Aec3APO](https://github.com/msdx321/Aec3APO), qui applique la même
+recette. C'est le mécanisme retenu pour Kwiet ; `installer/effectpack/` en est
+l'implémentation.
+
+Un pack d'effets, c'est **deux INF** :
+
+1. **INF d'extension** (`Class=Extension`, sur `COMPUTER\Generic`) : sa seule
+   fonction est `AddComponent` avec un `ComponentIDs = VEN_xxx&AUDIO_EFFECTPACK_yyy`,
+   qui crée un devnode logiciel enfant `SWC\...`.
+2. **INF de composant** (`Class=AudioProcessingObject`,
+   ClassGuid `{5989fce8-9cd0-467d-8a6a-5419e31529d4}`) qui matche ce
+   `SWC\VEN_xxx&AUDIO_EFFECTPACK_yyy`, copie la DLL dans le DriverStore
+   (`DestinationDirs = 13`) et écrit **en HKR** (donc sous
+   `HKLM\SYSTEM\CurrentControlSet\Control\Class\{5989fce8-...}\NNNN`) :
+   - `Classes\CLSID\{APO}` + `InProcServer32 = %13%\xxx.dll` (REG_EXPAND_SZ) ;
+   - `AudioEngine\AudioProcessingObjects\{APO}` (le catalogue, scopé composant) ;
+   - `EffectPackRegistration\{EFFECT_CLSID}\FxProperties` : c'est **là** que
+     vivent `PKEY_FX_ModeEffectClsid`, `PKEY_CompositeFX_ModeEffectClsid`,
+     les modes supportés, et surtout les clés de ciblage.
+
+Clés de ciblage qui remplacent l'édition manuelle des endpoints :
+
+| PKEY | Valeur | Rôle |
+|---|---|---|
+| `PKEY_FX_ApplyToCapture` (`{D04E05A6-…},33`) | `1` | applique le pack aux endpoints de **capture** |
+| `PKEY_FX_Enumerator` (`,23`) | `*` | tous les bus (USB, HDAUDIO, BTHENUM…) |
+| `PKEY_FX_Association` (`,0`) | liste de `KSNODETYPE_*` | types de jack visés (micro, casque, array…) |
+| `PKEY_FX_ExcludeForHWIDs` (`{6473F77A-…},2`) | motifs | exclusions (`ROOT\*`, périphériques virtuels) |
+| `PKEY_FX_EffectPackSchema_Version` (`,29`) | `{7abf23d9-727e-4d0b-86a3-dd501d260101}` | schéma interne V1 |
+
+C'est AudioEndpointBuilder qui, à partir de ces règles, **pousse lui-même** le
+CLSID dans les `FxProperties` des endpoints concernés et y dépose un marqueur
+`{CLSID_APO},100 = <InstanceId du devnode SWC>` (constaté sur l'endpoint casque
+avec Voice Clarity). D'où la règle : **ne jamais écrire à la main dans les
+FxProperties d'un endpoint** — c'est le pack qui décide, et une écriture
+manuelle écrase la valeur du pack (le marqueur `,100` disparaît).
+
+Signature : `pnputil /add-driver` accepte un package signé par un certificat
+**auto-signé** placé dans `LocalMachine\Root` + `TrustedPublisher`, sans mode
+test signing (validé sur cette machine). La distribution passera par une
+signature attestation Partner Center.
+
+### État de validation (2026-08-03)
+
+`installer/effectpack/sign-install-dev.ps1` installe le pack sans erreur :
+device `SWD\DRIVERENUM\{...}#KWIETEFFECTPACK` présent et **OK**, composant
+enregistré en `...\Class\{5989fce8-…}\0005` avec les trois sous-clés
+(`AudioEngine`, `Classes`, `EffectPackRegistration`) — structure identique à
+Voice Clarity en `0001`. **Mais** aucun endpoint ne référence encore le CLSID
+Kwiet et la DLL n'est pas chargée. Reste à tester, dans l'ordre :
+
+1. **redémarrage complet** (AudioEndpointBuilder n'évalue probablement les
+   packs qu'à la construction des endpoints — un `pnputil /scan-devices` +
+   restart de service n'a pas suffi) ;
+2. si insuffisant : comparer finement notre `EffectPackRegistration` à celle de
+   Voice Clarity (`reg export` des deux sous-arbres, diff) ;
+3. vérifier si le moteur exige une signature d'éditeur particulière pour
+   *appliquer* un pack (au-delà de l'acceptation du package par pnputil).
+
+> ⚠️ Effet de bord constaté : le marqueur `{9E6136E0-…},100` de Voice Clarity a
+> disparu de l'endpoint casque après nos écritures manuelles de FxProperties.
+> Un redémarrage devrait le faire réécrire par AudioEndpointBuilder ; à
+> vérifier explicitement.
 
 ## 8. Questions ouvertes
 
