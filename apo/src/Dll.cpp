@@ -13,6 +13,7 @@
 #include <new>
 
 #include "KwietApo.h"
+#include "KwietDevLog.h"
 #include "KwietGuids.h"
 #include "Module.h"
 
@@ -54,6 +55,10 @@ public:
             AddRef();
             return S_OK;
         }
+#if defined(KWIET_DEV_LOG)
+        char g[40];
+        KWIET_LOG("Factory QI: E_NOINTERFACE for %s", KwietGuidToA(riid, g, sizeof(g)));
+#endif
         *ppvObject = nullptr;
         return E_NOINTERFACE;
     }
@@ -74,20 +79,13 @@ public:
 
     STDMETHODIMP CreateInstance(IUnknown* pUnkOuter, REFIID riid, void** ppvObject) override
     {
-        if (ppvObject == nullptr) {
-            return E_POINTER;
-        }
-        *ppvObject = nullptr;
-        if (pUnkOuter != nullptr) {
-            return CLASS_E_NOAGGREGATION;
-        }
-
-        KwietApo* apo = new (std::nothrow) KwietApo();
-        if (apo == nullptr) {
-            return E_OUTOFMEMORY;
-        }
-        const HRESULT hr = apo->QueryInterface(riid, ppvObject);
-        apo->Release();
+#if defined(KWIET_DEV_LOG)
+        char g[40];
+        KWIET_LOG("Factory CreateInstance: riid=%s outer=%p", KwietGuidToA(riid, g, sizeof(g)), pUnkOuter);
+#endif
+        // audiodg aggregates APOs (outer != nullptr, riid = IID_IUnknown).
+        const HRESULT hr = KwietApo::Create(pUnkOuter, riid, ppvObject);
+        KWIET_LOG("Factory CreateInstance: hr=0x%08lX", static_cast<unsigned long>(hr));
         return hr;
     }
 
@@ -118,6 +116,13 @@ HRESULT WriteRegSz(HKEY key, const wchar_t* valueName, const wchar_t* data)
     return HRESULT_FROM_WIN32(st);
 }
 
+HRESULT WriteRegDword(HKEY key, const wchar_t* valueName, DWORD data)
+{
+    const LSTATUS st = RegSetValueExW(key, valueName, 0, REG_DWORD,
+                                      reinterpret_cast<const BYTE*>(&data), sizeof(data));
+    return HRESULT_FROM_WIN32(st);
+}
+
 HRESULT BuildClsidKeyPath(wchar_t* buffer, size_t bufferCount)
 {
     wchar_t clsidStr[64] = {};
@@ -130,6 +135,69 @@ HRESULT BuildClsidKeyPath(wchar_t* buffer, size_t bufferCount)
     return S_OK;
 }
 
+// AudioEndpointBuilder resolves endpoint FX against this catalog (equivalent of
+// the samples' RegisterAPO()). Keep the values in sync with
+// KwietApo::GetRegistrationProperties.
+HRESULT BuildApoCatalogKeyPath(wchar_t* buffer, size_t bufferCount)
+{
+    wchar_t clsidStr[64] = {};
+    if (StringFromGUID2(CLSID_KwietApo, clsidStr, ARRAYSIZE(clsidStr)) == 0) {
+        return E_UNEXPECTED;
+    }
+    if (swprintf_s(buffer, bufferCount,
+                   L"SOFTWARE\\Classes\\AudioEngine\\AudioProcessingObjects\\%s", clsidStr) < 0) {
+        return E_UNEXPECTED;
+    }
+    return S_OK;
+}
+
+HRESULT RegisterApoCatalog()
+{
+    wchar_t keyPath[160] = {};
+    HRESULT hr = BuildApoCatalogKeyPath(keyPath, ARRAYSIZE(keyPath));
+    if (FAILED(hr)) {
+        return hr;
+    }
+
+    HKEY key = nullptr;
+    const LSTATUS st = RegCreateKeyExW(HKEY_LOCAL_MACHINE, keyPath, 0, nullptr, 0,
+                                       KEY_WRITE | KEY_WOW64_64KEY, nullptr, &key, nullptr);
+    if (st != ERROR_SUCCESS) {
+        return HRESULT_FROM_WIN32(st);
+    }
+
+    hr = WriteRegSz(key, L"FriendlyName", L"Kwiet Passthrough APO");
+    if (SUCCEEDED(hr)) hr = WriteRegSz(key, L"Copyright", L"Copyright (c) 2026 Kwiet contributors (Apache-2.0)");
+    if (SUCCEEDED(hr)) hr = WriteRegDword(key, L"MajorVersion", 1);
+    if (SUCCEEDED(hr)) hr = WriteRegDword(key, L"MinorVersion", 0);
+    if (SUCCEEDED(hr)) hr = WriteRegDword(key, L"Flags", APO_FLAG_INPLACE | APO_FLAG_DEFAULT);
+    if (SUCCEEDED(hr)) hr = WriteRegDword(key, L"MinInputConnections", 1);
+    if (SUCCEEDED(hr)) hr = WriteRegDword(key, L"MaxInputConnections", 1);
+    if (SUCCEEDED(hr)) hr = WriteRegDword(key, L"MinOutputConnections", 1);
+    if (SUCCEEDED(hr)) hr = WriteRegDword(key, L"MaxOutputConnections", 1);
+    if (SUCCEEDED(hr)) hr = WriteRegDword(key, L"MaxInstances", 0xFFFFFFFF);
+    if (SUCCEEDED(hr)) hr = WriteRegDword(key, L"NumAPOInterfaces", 3);
+
+    const IID interfaces[3] = {
+        __uuidof(IAudioProcessingObject),
+        __uuidof(IAudioProcessingObjectRT),
+        __uuidof(IAudioProcessingObjectConfiguration),
+    };
+    for (int i = 0; SUCCEEDED(hr) && i < 3; ++i) {
+        wchar_t iidStr[64] = {};
+        wchar_t valueName[24] = {};
+        if (StringFromGUID2(interfaces[i], iidStr, ARRAYSIZE(iidStr)) == 0) {
+            hr = E_UNEXPECTED;
+            break;
+        }
+        swprintf_s(valueName, L"APOInterface%d", i);
+        hr = WriteRegSz(key, valueName, iidStr);
+    }
+
+    RegCloseKey(key);
+    return hr;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -137,6 +205,11 @@ HRESULT BuildClsidKeyPath(wchar_t* buffer, size_t bufferCount)
 
 STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppvObject)
 {
+#if defined(KWIET_DEV_LOG)
+    char g1[40], g2[40];
+    KWIET_LOG("DllGetClassObject: clsid=%s riid=%s",
+              KwietGuidToA(rclsid, g1, sizeof(g1)), KwietGuidToA(riid, g2, sizeof(g2)));
+#endif
     if (ppvObject == nullptr) {
         return E_POINTER;
     }
@@ -201,18 +274,31 @@ STDAPI DllRegisterServer()
         RegCloseKey(inprocKey);
     }
     RegCloseKey(clsidKey);
+
+    if (SUCCEEDED(hr)) {
+        hr = RegisterApoCatalog();
+    }
     return hr;
 }
 
 STDAPI DllUnregisterServer()
 {
-    wchar_t keyPath[128] = {};
-    const HRESULT hr = BuildClsidKeyPath(keyPath, ARRAYSIZE(keyPath));
+    wchar_t keyPath[160] = {};
+    HRESULT hr = BuildClsidKeyPath(keyPath, ARRAYSIZE(keyPath));
     if (FAILED(hr)) {
         return hr;
     }
 
-    const LSTATUS st = RegDeleteTreeW(HKEY_LOCAL_MACHINE, keyPath);
+    LSTATUS st = RegDeleteTreeW(HKEY_LOCAL_MACHINE, keyPath);
+    if (st != ERROR_SUCCESS && st != ERROR_FILE_NOT_FOUND) {
+        return HRESULT_FROM_WIN32(st);
+    }
+
+    hr = BuildApoCatalogKeyPath(keyPath, ARRAYSIZE(keyPath));
+    if (FAILED(hr)) {
+        return hr;
+    }
+    st = RegDeleteTreeW(HKEY_LOCAL_MACHINE, keyPath);
     if (st == ERROR_SUCCESS || st == ERROR_FILE_NOT_FOUND) {
         return S_OK;
     }
@@ -224,6 +310,10 @@ BOOL WINAPI DllMain(HINSTANCE hInstance, DWORD dwReason, LPVOID /*lpReserved*/)
     if (dwReason == DLL_PROCESS_ATTACH) {
         g_kwietModule = reinterpret_cast<HMODULE>(hInstance);
         DisableThreadLibraryCalls(hInstance);
+#if defined(KWIET_DEV_LOG)
+        // No file I/O under loader lock: debugger channel only.
+        OutputDebugStringA("KwietApo: DLL_PROCESS_ATTACH\n");
+#endif
     }
     return TRUE;
 }

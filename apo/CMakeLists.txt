@@ -8,14 +8,25 @@ if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR "x64 only (audiodg.exe is 64-bit). Configure with: cmake -A x64")
 endif()
 
+# Dev diagnostics (file log + OutputDebugString in non-RT entry points).
+# Never enable in distributed builds.
+option(KWIET_DEV_LOG "Enable Kwiet dev diagnostics logging" OFF)
+
 add_library(kwiet_apo SHARED
     src/Dll.cpp
     src/KwietApo.cpp
     src/KwietApo.def
     src/KwietApo.h
+    src/KwietDevLog.cpp
+    src/KwietDevLog.h
     src/KwietGuids.h
+    src/KwietSe3.h
     src/Module.h
 )
+
+if(KWIET_DEV_LOG)
+    target_compile_definitions(kwiet_apo PRIVATE KWIET_DEV_LOG)
+endif()
 
 set_target_properties(kwiet_apo PROPERTIES
     OUTPUT_NAME "KwietApo"

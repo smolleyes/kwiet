@@ -104,30 +104,52 @@ try {
         $clsidName = "$($script:FxClsidFmtid),$slotPidLocal"
         $modesName = "$($script:FxModesFmtid),$slotPidLocal"
         foreach ($name in @($clsidName, $modesName)) {
-            Remove-ItemProperty -Path $t.FxPath -Name $name -ErrorAction SilentlyContinue
+            Remove-KwietFxValue -EndpointId $t.EndpointId -ValueName $name
         }
         Write-Host "-> FX $($t.Slot) retirées de $($t.EndpointId)"
     }
 
+    # 1bis) Retrait du CLSID Kwiet des chaînes CompositeFX (,12/,13/,14) où il
+    #        aurait été inséré lors d'essais d'intégration.
+    if (Test-Path $script:MMCaptureKey) {
+        foreach ($ep in Get-ChildItem $script:MMCaptureKey) {
+            $fxPath = Join-Path $ep.PSPath 'FxProperties'
+            if (-not (Test-Path $fxPath)) { continue }
+            $props = Get-ItemProperty -Path $fxPath
+            foreach ($compositePid in 12, 13, 14) {
+                $name = "$($script:FxClsidFmtid),$compositePid"
+                $p = $props.PSObject.Properties[$name]
+                if ($null -eq $p -or $p.Value -isnot [array]) { continue }
+                if ($p.Value -contains $script:KwietClsid) {
+                    $newChain = @($p.Value | Where-Object { $_ -ne $script:KwietClsid })
+                    if ($newChain.Count -gt 0) {
+                        Set-KwietFxValue -EndpointId $ep.PSChildName -ValueName $name -Value $newChain
+                    } else {
+                        Remove-KwietFxValue -EndpointId $ep.PSChildName -ValueName $name
+                    }
+                    Write-Host "-> CLSID retiré de la chaîne composite $name ($($ep.PSChildName))"
+                }
+            }
+        }
+    }
+
     # 2) Restauration des valeurs préexistantes écrasées par -Force à l'install.
     if ($null -ne $state -and $null -ne $state.previousFxValues) {
-        $fxPath = Get-KwietFxKeyPath $state.endpointId
         foreach ($prop in $state.previousFxValues.PSObject.Properties) {
             if ($null -eq $prop.Value) { continue }
-            if ($prop.Value -is [array]) {
-                New-ItemProperty -Path $fxPath -Name $prop.Name -Value ([string[]]$prop.Value) -PropertyType MultiString -Force | Out-Null
-            } else {
-                New-ItemProperty -Path $fxPath -Name $prop.Name -Value ([string]$prop.Value) -PropertyType String -Force | Out-Null
-            }
+            Set-KwietFxValue -EndpointId $state.endpointId -ValueName $prop.Name -Value $prop.Value
             Write-Host "-> Valeur préexistante restaurée : $($prop.Name)"
         }
     }
 
     # 3) Réimport complet du backup si demandé.
     if ($ImportBackup -and $null -ne $state -and (Test-Path $state.backupEndpointReg)) {
-        & reg.exe import $state.backupEndpointReg 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "reg import a échoué (code $LASTEXITCODE)." }
-        Write-Host "-> Backup réimporté : $($state.backupEndpointReg)"
+        & reg.exe import $state.backupEndpointReg | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "reg import a renvoyé $LASTEXITCODE (l'ACL MMDevices peut bloquer un import complet) — les valeurs Kwiet sont déjà retirées, non bloquant."
+        } else {
+            Write-Host "-> Backup réimporté : $($state.backupEndpointReg)"
+        }
     }
 
     # 4) Désenregistrement COM.
@@ -135,10 +157,10 @@ try {
         $p = Start-Process -FilePath regsvr32.exe -ArgumentList '/u', '/s', "`"$($script:KwietDllTarget)`"" -Wait -PassThru
         if ($p.ExitCode -ne 0) { Write-Warning "regsvr32 /u a renvoyé $($p.ExitCode)." }
     }
-    if (Test-Path $script:ClsidRegKey) {
-        Remove-Item -Path $script:ClsidRegKey -Recurse -Force
+    foreach ($k in @($script:ClsidRegKey, $script:ApoCatalogKey)) {
+        if (Test-Path $k) { Remove-Item -Path $k -Recurse -Force }
     }
-    Write-Host '-> Classe COM désenregistrée'
+    Write-Host '-> Classe COM et catalogue APO désenregistrés'
 
     # 5) Suppression de la DLL (audiodg peut la garder quelques instants).
     if (Test-Path $script:KwietDllTarget) {
@@ -156,8 +178,12 @@ try {
             $hadError = $true
         }
     }
-    if ((Test-Path $script:KwietInstallDir) -and -not (Get-ChildItem $script:KwietInstallDir)) {
-        Remove-Item -Path $script:KwietInstallDir -Force
+    # Ancien emplacement Program Files\Kwiet (installs pré-System32).
+    if (Test-Path $script:KwietLegacyDll) {
+        Remove-Item -Path $script:KwietLegacyDll -Force -ErrorAction SilentlyContinue
+    }
+    if ((Test-Path $script:KwietLegacyDir) -and -not (Get-ChildItem $script:KwietLegacyDir)) {
+        Remove-Item -Path $script:KwietLegacyDir -Force
     }
 
     # 6) DisableProtectedAudioDG : uniquement si c'est NOUS qui l'avons posé.

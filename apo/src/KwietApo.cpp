@@ -4,6 +4,7 @@
 
 #include <cstring>
 
+#include "KwietDevLog.h"
 #include "Module.h"
 
 namespace {
@@ -37,54 +38,121 @@ bool IsFloat32(IAudioMediaType* type, UNCOMPRESSEDAUDIOFORMAT* outFmt = nullptr)
 
 } // namespace
 
-KwietApo::KwietApo()
+KwietApo::KwietApo(IUnknown* pUnkOuter)
+    : m_controlling(pUnkOuter != nullptr ? pUnkOuter : &m_inner)
 {
     ModuleAddRef();
+    KWIET_LOG("KwietApo: instance created (aggregated=%d)", pUnkOuter != nullptr);
 }
 
 KwietApo::~KwietApo()
 {
+    KWIET_LOG("KwietApo: instance destroyed (mode was set=%d)", m_processingMode.Data1 != 0);
     ModuleRelease();
 }
 
-// ---------------------------------------------------------------------------
-// IUnknown
-
-HRESULT KwietApo::QueryInterface(REFIID riid, void** ppvObject)
+HRESULT KwietApo::Create(IUnknown* pUnkOuter, REFIID riid, void** ppvObject)
 {
     if (ppvObject == nullptr) {
         return E_POINTER;
     }
     *ppvObject = nullptr;
 
-    if (riid == __uuidof(IUnknown) || riid == __uuidof(IAudioProcessingObject)) {
-        *ppvObject = static_cast<IAudioProcessingObject*>(this);
+    // COM rule: an aggregated object may only be asked for IUnknown.
+    if (pUnkOuter != nullptr && riid != __uuidof(IUnknown)) {
+        return CLASS_E_NOAGGREGATION;
+    }
+
+    KwietApo* apo = new (std::nothrow) KwietApo(pUnkOuter);
+    if (apo == nullptr) {
+        return E_OUTOFMEMORY;
+    }
+
+    if (pUnkOuter != nullptr) {
+        // Hand out the NON-delegating unknown (refcount 1, owned by caller).
+        *ppvObject = static_cast<IUnknown*>(&apo->m_inner);
+        return S_OK;
+    }
+
+    const HRESULT hr = apo->m_inner.QueryInterface(riid, ppvObject);
+    apo->m_inner.Release(); // drop creation ref; destroys the object if QI failed
+    return hr;
+}
+
+// ---------------------------------------------------------------------------
+// IUnknown — non-delegating (aggregation inner)
+
+HRESULT KwietApo::Inner::QueryInterface(REFIID riid, void** ppvObject)
+{
+    if (ppvObject == nullptr) {
+        return E_POINTER;
+    }
+    *ppvObject = nullptr;
+
+    KwietApo& o = m_owner;
+    if (riid == __uuidof(IUnknown)) {
+        *ppvObject = static_cast<IUnknown*>(this);
+    } else if (riid == __uuidof(IAudioProcessingObject)) {
+        KWIET_LOG("QI ok: IAudioProcessingObject");
+        *ppvObject = static_cast<IAudioProcessingObject*>(&o);
     } else if (riid == __uuidof(IAudioProcessingObjectRT)) {
-        *ppvObject = static_cast<IAudioProcessingObjectRT*>(this);
+        KWIET_LOG("QI ok: IAudioProcessingObjectRT");
+        *ppvObject = static_cast<IAudioProcessingObjectRT*>(&o);
     } else if (riid == __uuidof(IAudioProcessingObjectConfiguration)) {
-        *ppvObject = static_cast<IAudioProcessingObjectConfiguration*>(this);
-    } else if (riid == __uuidof(IAudioSystemEffects) || riid == __uuidof(IAudioSystemEffects2)) {
-        *ppvObject = static_cast<IAudioSystemEffects2*>(this);
+        KWIET_LOG("QI ok: IAudioProcessingObjectConfiguration");
+        *ppvObject = static_cast<IAudioProcessingObjectConfiguration*>(&o);
+    } else if (riid == __uuidof(IAudioSystemEffects) || riid == __uuidof(IAudioSystemEffects2)
+               || riid == __uuidof(IAudioSystemEffects3)) {
+        *ppvObject = static_cast<IAudioSystemEffects3*>(&o);
+    } else if (riid == __uuidof(IAudioProcessingObjectNotifications)) {
+        *ppvObject = static_cast<IAudioProcessingObjectNotifications*>(&o);
+    } else if (riid == __uuidof(IAudioProcessingObjectPreferredFormatSupport)) {
+        *ppvObject = static_cast<IAudioProcessingObjectPreferredFormatSupport*>(&o);
     } else {
+#if defined(KWIET_DEV_LOG)
+        char g[40];
+        KWIET_LOG("QI: E_NOINTERFACE for %s", KwietGuidToA(riid, g, sizeof(g)));
+#endif
         return E_NOINTERFACE;
     }
 
-    AddRef();
+    // AddRef through the returned pointer: for owner interfaces this goes
+    // through the delegating vtable (i.e. the outer when aggregated), per the
+    // COM aggregation rules.
+    static_cast<IUnknown*>(*ppvObject)->AddRef();
     return S_OK;
+}
+
+ULONG KwietApo::Inner::AddRef()
+{
+    return m_owner.m_refCount.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
+ULONG KwietApo::Inner::Release()
+{
+    const ULONG remaining = m_owner.m_refCount.fetch_sub(1, std::memory_order_acq_rel) - 1;
+    if (remaining == 0) {
+        delete &m_owner;
+    }
+    return remaining;
+}
+
+// ---------------------------------------------------------------------------
+// IUnknown — delegating (public interfaces forward to the controlling unknown)
+
+HRESULT KwietApo::QueryInterface(REFIID riid, void** ppvObject)
+{
+    return m_controlling->QueryInterface(riid, ppvObject);
 }
 
 ULONG KwietApo::AddRef()
 {
-    return m_refCount.fetch_add(1, std::memory_order_relaxed) + 1;
+    return m_controlling->AddRef();
 }
 
 ULONG KwietApo::Release()
 {
-    const ULONG remaining = m_refCount.fetch_sub(1, std::memory_order_acq_rel) - 1;
-    if (remaining == 0) {
-        delete this;
-    }
-    return remaining;
+    return m_controlling->Release();
 }
 
 // ---------------------------------------------------------------------------
@@ -109,6 +177,7 @@ HRESULT KwietApo::GetLatency(HNSTIME* pTime)
 
 HRESULT KwietApo::GetRegistrationProperties(APO_REG_PROPERTIES** ppRegProps)
 {
+    KWIET_LOG("GetRegistrationProperties");
     if (ppRegProps == nullptr) {
         return E_POINTER;
     }
@@ -123,13 +192,14 @@ HRESULT KwietApo::GetRegistrationProperties(APO_REG_PROPERTIES** ppRegProps)
     ZeroMemory(props, cb);
 
     props->clsid = CLSID_KwietApo;
-    // Engine must give us identical formats on both sides; no format conversion
-    // in the APO itself.
-    props->Flags = APO_FLAG_DEFAULT;
+    // Identical formats on both sides, and INPLACE: the Windows 11 mode pipe
+    // silently drops non-inplace APOs at graph build (every working catalog
+    // entry on real hardware carries APO_FLAG_INPLACE).
+    props->Flags = static_cast<APO_FLAG>(APO_FLAG_INPLACE | APO_FLAG_DEFAULT);
     wcscpy_s(props->szFriendlyName, L"Kwiet Passthrough APO");
     wcscpy_s(props->szCopyrightInfo, L"Copyright (c) 2026 Kwiet contributors (Apache-2.0)");
-    props->u32MajorVersion = 0;
-    props->u32MinorVersion = 1;
+    props->u32MajorVersion = 1;
+    props->u32MinorVersion = 0;
     props->u32MinInputConnections = 1;
     props->u32MaxInputConnections = 1;
     props->u32MinOutputConnections = 1;
@@ -146,12 +216,17 @@ HRESULT KwietApo::GetRegistrationProperties(APO_REG_PROPERTIES** ppRegProps)
 
 HRESULT KwietApo::Initialize(UINT32 cbDataSize, BYTE* pbyData)
 {
+    KWIET_LOG("Initialize: cbDataSize=%u (base=%u, SE=%u, SE2=%u)", cbDataSize,
+              static_cast<unsigned>(sizeof(APOInitBaseStruct)),
+              static_cast<unsigned>(sizeof(APOInitSystemEffects)),
+              static_cast<unsigned>(sizeof(APOInitSystemEffects2)));
     if (pbyData == nullptr || cbDataSize < sizeof(APOInitBaseStruct)) {
         return E_INVALIDARG;
     }
 
     const auto* base = reinterpret_cast<const APOInitBaseStruct*>(pbyData);
     if (!IsEqualGUID(base->clsid, CLSID_KwietApo)) {
+        KWIET_LOG("Initialize: clsid mismatch -> E_INVALIDARG");
         return E_INVALIDARG;
     }
 
@@ -159,14 +234,28 @@ HRESULT KwietApo::Initialize(UINT32 cbDataSize, BYTE* pbyData)
     if (cbDataSize == sizeof(APOInitSystemEffects2)) {
         const auto* init2 = reinterpret_cast<const APOInitSystemEffects2*>(pbyData);
         m_processingMode = init2->AudioProcessingMode;
-        // init2->InitializeForDiscoveryOnly: instantiated for enumeration only;
-        // nothing extra to do for a passthrough.
+#if defined(KWIET_DEV_LOG)
+        char g[40];
+        KWIET_LOG("Initialize: SE2, mode=%s, discoveryOnly=%d",
+                  KwietGuidToA(init2->AudioProcessingMode, g, sizeof(g)),
+                  init2->InitializeForDiscoveryOnly);
+#endif
+    } else if (cbDataSize == sizeof(APOInitSystemEffects3)) {
+        // The engine switches to this layout once the APO exposes SE3.
+        const auto* init3 = reinterpret_cast<const APOInitSystemEffects3*>(pbyData);
+        m_processingMode = init3->AudioProcessingMode;
+#if defined(KWIET_DEV_LOG)
+        char g[40];
+        KWIET_LOG("Initialize: SE3, mode=%s, discoveryOnly=%d",
+                  KwietGuidToA(init3->AudioProcessingMode, g, sizeof(g)),
+                  init3->InitializeForDiscoveryOnly);
+#endif
     }
-    // TODO(milestone 2): handle APOInitSystemEffects3 (Win11 22H2+, different
-    // layout, do NOT cast by size >=) and read endpoint property stores if the
-    // DSP ever needs per-endpoint settings. Control plane stays shmem-based.
+    // Property stores / service provider are not retained: the control plane
+    // stays shmem-based (milestone 4).
 
     m_initialized = true;
+    KWIET_LOG("Initialize: S_OK");
     return S_OK;
 }
 
@@ -174,6 +263,7 @@ HRESULT KwietApo::IsInputFormatSupported(IAudioMediaType* pOppositeFormat,
                                          IAudioMediaType* pRequestedInputFormat,
                                          IAudioMediaType** ppSupportedInputFormat)
 {
+    KWIET_LOG("IsInputFormatSupported");
     if (pRequestedInputFormat == nullptr || ppSupportedInputFormat == nullptr) {
         return E_POINTER;
     }
@@ -269,11 +359,14 @@ HRESULT KwietApo::LockForProcess(UINT32 u32NumInputConnections,
     // (non-RT context); APOProcess must never allocate.
 
     m_locked.store(true, std::memory_order_release);
+    KWIET_LOG("LockForProcess: S_OK, %u ch, %.0f Hz", m_samplesPerFrame,
+              static_cast<double>(inFmt.fFramesPerSecond));
     return S_OK;
 }
 
 HRESULT KwietApo::UnlockForProcess()
 {
+    KWIET_LOG("UnlockForProcess");
     m_locked.store(false, std::memory_order_release);
     // Milestone 2: stop the worker and free rings here.
     return S_OK;
@@ -344,12 +437,109 @@ HRESULT KwietApo::GetEffectsList(LPGUID* ppEffectsIds, UINT* pcEffects, HANDLE E
 {
     UNREFERENCED_PARAMETER(Event); // static effect list, no change notification
 
+    KWIET_LOG("GetEffectsList");
     if (ppEffectsIds == nullptr || pcEffects == nullptr) {
         return E_POINTER;
     }
-    // The passthrough advertises no effect. Milestone 2 returns
-    // KWIET_EFFECT_NoiseSuppression here when the DSP is enabled.
-    *ppEffectsIds = nullptr;
-    *pcEffects = 0;
+    if (!m_effectEnabled.load(std::memory_order_relaxed)) {
+        *ppEffectsIds = nullptr;
+        *pcEffects = 0;
+        return S_OK;
+    }
+    auto* ids = static_cast<GUID*>(CoTaskMemAlloc(sizeof(GUID)));
+    if (ids == nullptr) {
+        return E_OUTOFMEMORY;
+    }
+    ids[0] = KWIET_EFFECT_NoiseSuppression;
+    *ppEffectsIds = ids;
+    *pcEffects = 1;
     return S_OK;
+}
+
+// ---------------------------------------------------------------------------
+// IAudioSystemEffects3
+
+HRESULT KwietApo::GetControllableSystemEffectsList(AUDIO_SYSTEMEFFECT** effects,
+                                                   UINT* numEffects, HANDLE event)
+{
+    UNREFERENCED_PARAMETER(event); // static effect list, no change notification
+
+    KWIET_LOG("GetControllableSystemEffectsList");
+    if (effects == nullptr || numEffects == nullptr) {
+        return E_POINTER;
+    }
+    auto* list = static_cast<AUDIO_SYSTEMEFFECT*>(CoTaskMemAlloc(sizeof(AUDIO_SYSTEMEFFECT)));
+    if (list == nullptr) {
+        return E_OUTOFMEMORY;
+    }
+    list[0].id = KWIET_EFFECT_NoiseSuppression;
+    list[0].canSetState = TRUE;
+    list[0].state = m_effectEnabled.load(std::memory_order_relaxed)
+                        ? AUDIO_SYSTEMEFFECT_STATE_ON
+                        : AUDIO_SYSTEMEFFECT_STATE_OFF;
+    *effects = list;
+    *numEffects = 1;
+    return S_OK;
+}
+
+HRESULT KwietApo::SetAudioSystemEffectState(GUID effectId, AUDIO_SYSTEMEFFECT_STATE state)
+{
+    if (!IsEqualGUID(effectId, KWIET_EFFECT_NoiseSuppression)) {
+        return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+    }
+    const bool enabled = (state == AUDIO_SYSTEMEFFECT_STATE_ON);
+    m_effectEnabled.store(enabled, std::memory_order_relaxed);
+    KWIET_LOG("SetAudioSystemEffectState: enabled=%d", enabled);
+    // Milestone 2: propagate to the DSP bypass flag (shmem/atomics).
+    return S_OK;
+}
+
+// ---------------------------------------------------------------------------
+// IAudioProcessingObjectNotifications
+
+HRESULT KwietApo::GetApoNotificationRegistrationInfo(
+    APO_NOTIFICATION_DESCRIPTOR** apoNotifications, DWORD* count)
+{
+    KWIET_LOG("GetApoNotificationRegistrationInfo");
+    if (apoNotifications == nullptr || count == nullptr) {
+        return E_POINTER;
+    }
+    // No notification subscriptions for the passthrough.
+    *apoNotifications = nullptr;
+    *count = 0;
+    return S_OK;
+}
+
+void KwietApo::HandleNotification(APO_NOTIFICATION* apoNotification)
+{
+    UNREFERENCED_PARAMETER(apoNotification); // nothing subscribed
+}
+
+// ---------------------------------------------------------------------------
+// IAudioProcessingObjectPreferredFormatSupport
+
+HRESULT KwietApo::GetPreferredInputFormat(IAudioMediaType* outputFormat,
+                                          IAudioMediaType** preferredFormat)
+{
+    UNREFERENCED_PARAMETER(outputFormat);
+    KWIET_LOG("GetPreferredInputFormat -> E_NOTIMPL (no preference)");
+    if (preferredFormat != nullptr) {
+        *preferredFormat = nullptr;
+    }
+    // No format preference: a 1:1 passthrough accepts whatever the pipe uses.
+    // Returning S_OK with a format here makes the engine treat the APO as a
+    // format converter and drop it from the mode pipe (observed empirically);
+    // E_NOTIMPL falls back to the standard negotiation.
+    return E_NOTIMPL;
+}
+
+HRESULT KwietApo::GetPreferredOutputFormat(IAudioMediaType* inputFormat,
+                                           IAudioMediaType** preferredFormat)
+{
+    UNREFERENCED_PARAMETER(inputFormat);
+    KWIET_LOG("GetPreferredOutputFormat -> E_NOTIMPL (no preference)");
+    if (preferredFormat != nullptr) {
+        *preferredFormat = nullptr;
+    }
+    return E_NOTIMPL;
 }

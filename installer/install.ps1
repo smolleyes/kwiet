@@ -89,6 +89,9 @@ $slotPid        = $script:SlotPids[$Slot]
 $clsidValueName = "$($script:FxClsidFmtid),$slotPid"
 $modesValueName = "$($script:FxModesFmtid),$slotPid"
 $fxKey          = Get-KwietFxKeyPath $EndpointId
+if (-not (Test-Path $fxKey)) {
+    throw "Clé FxProperties absente pour cet endpoint (normalement créée par AudioEndpointBuilder). Choisis un autre endpoint."
+}
 
 # --- Récapitulatif + confirmation --------------------------------------------
 Write-Host ''
@@ -148,8 +151,8 @@ if ($audioPol -and $audioPol.PSObject.Properties['DisableProtectedAudioDG']) {
 try {
     Stop-KwietAudioStack
 
-    # 1) DLL dans Program Files (lisible par le compte de service d'audiodg).
-    New-Item -ItemType Directory -Force -Path $script:KwietInstallDir | Out-Null
+    # 1) DLL dans System32 : audiodg résout les APO par nom de fichier via
+    #    l'ordre de recherche système, jamais par le chemin InprocServer32.
     Copy-Item -Path $DllPath -Destination $script:KwietDllTarget -Force
     Write-Host "-> DLL copiée : $($script:KwietDllTarget)"
 
@@ -158,12 +161,26 @@ try {
     if ($p.ExitCode -ne 0) { throw "regsvr32 a échoué (code $($p.ExitCode))." }
     Write-Host "-> Classe COM enregistrée : $($script:KwietClsid)"
 
-    # 3) FxProperties de l'endpoint.
-    if (-not (Test-Path $fxKey)) { New-Item -Path $fxKey -Force | Out-Null }
-    New-ItemProperty -Path $fxKey -Name $clsidValueName -Value $script:KwietClsid -PropertyType String -Force | Out-Null
-    New-ItemProperty -Path $fxKey -Name $modesValueName `
-        -Value @($script:ModeDefault, $script:ModeCommunications) -PropertyType MultiString -Force | Out-Null
-    Write-Host "-> FxProperties écrites ($Slot, modes DEFAULT + COMMUNICATIONS)"
+    # 3) FxProperties de l'endpoint (écriture .NET à droits minimaux, cf.
+    #    Open-KwietFxNetKey dans lib/common.ps1 pour la raison ACL).
+    Set-KwietFxValue -EndpointId $EndpointId -ValueName $clsidValueName -Value $script:KwietClsid
+    # Modes : fusion avec l'existant — ne jamais retirer les modes déclarés par
+    # le driver (SPEECH, etc.), seulement garantir DEFAULT + COMMUNICATIONS.
+    $existingModes = @()
+    if ($previousFx.ContainsKey($modesValueName)) { $existingModes = @($previousFx[$modesValueName]) }
+    $mergedModes = @(@($existingModes) + @($script:ModeDefault, $script:ModeCommunications) | Select-Object -Unique)
+    if ($mergedModes.Count -eq $existingModes.Count) {
+        Write-Host '-> Modes de traitement déjà déclarés, valeur laissée intacte'
+    } else {
+        Set-KwietFxValue -EndpointId $EndpointId -ValueName $modesValueName -Value $mergedModes
+    }
+    # Vérification par relecture.
+    $check = Get-ItemProperty -Path $fxKey
+    $checkProp = $check.PSObject.Properties[$clsidValueName]
+    if ($null -eq $checkProp -or $checkProp.Value -ne $script:KwietClsid) {
+        throw 'Relecture FxProperties : la valeur CLSID ne correspond pas après écriture.'
+    }
+    Write-Host "-> FxProperties écrites et vérifiées ($Slot, modes DEFAULT + COMMUNICATIONS)"
 
     # 4) APO non signé : audiodg refuse les APO non signés sans ce réglage.
     if (-not $SkipUnsignedTweak) {

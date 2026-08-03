@@ -37,6 +37,7 @@ if ($comOk) {
     }
 }
 Write-Check (Test-Path $script:KwietDllTarget) 'DLL en place' $script:KwietDllTarget
+Write-Check (Test-Path $script:ApoCatalogKey) 'Catalogue APO (AudioEngine\AudioProcessingObjects)'
 
 # --- Politique audiodg ---------------------------------------------------------
 Write-Host ''

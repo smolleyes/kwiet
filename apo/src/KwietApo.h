@@ -5,6 +5,8 @@
 
 #include <atomic>
 
+#include "KwietSe3.h"
+
 #include "KwietGuids.h"
 
 // Kwiet passthrough APO (milestone 1).
@@ -12,19 +14,27 @@
 // Copies capture input to output untouched. The real DSP plumbing (SPSC rings
 // + worker thread + Rust cdylib) arrives at milestone 2 and must keep
 // APOProcess() allocation-free, lock-free, syscall-free and fail-open.
+//
+// COM aggregation: audiodg creates APOs aggregated (pUnkOuter != nullptr,
+// riid = IID_IUnknown), so the class implements the classic inner/outer
+// pattern: a non-delegating IUnknown handed to the aggregator, while the
+// public interfaces delegate IUnknown calls to the controlling unknown.
 class KwietApo final
     : public IAudioProcessingObject
     , public IAudioProcessingObjectRT
     , public IAudioProcessingObjectConfiguration
-    , public IAudioSystemEffects2
+    , public IAudioSystemEffects3
+    , public IAudioProcessingObjectNotifications
+    , public IAudioProcessingObjectPreferredFormatSupport
 {
 public:
-    KwietApo();
+    // Factory entry point; supports aggregated and standalone creation.
+    static HRESULT Create(IUnknown* pUnkOuter, REFIID riid, void** ppvObject);
 
     KwietApo(const KwietApo&) = delete;
     KwietApo& operator=(const KwietApo&) = delete;
 
-    // IUnknown
+    // IUnknown (delegating: forwards to the controlling unknown)
     STDMETHODIMP QueryInterface(REFIID riid, void** ppvObject) override;
     STDMETHODIMP_(ULONG) AddRef() override;
     STDMETHODIMP_(ULONG) Release() override;
@@ -60,10 +70,46 @@ public:
     // IAudioSystemEffects2
     STDMETHODIMP GetEffectsList(LPGUID* ppEffectsIds, UINT* pcEffects, HANDLE Event) override;
 
+    // IAudioSystemEffects3 — Windows 11 requires this for an APO to stay in
+    // the graph: the engine drops effect-less/SE2-only APOs at insertion time.
+    STDMETHODIMP GetControllableSystemEffectsList(AUDIO_SYSTEMEFFECT** effects,
+                                                  UINT* numEffects, HANDLE event) override;
+    STDMETHODIMP SetAudioSystemEffectState(GUID effectId,
+                                           AUDIO_SYSTEMEFFECT_STATE state) override;
+
+    // IAudioProcessingObjectNotifications — part of the SE3 contract; the
+    // passthrough registers for zero notifications.
+    STDMETHODIMP GetApoNotificationRegistrationInfo(APO_NOTIFICATION_DESCRIPTOR** apoNotifications,
+                                                    DWORD* count) override;
+    STDMETHODIMP_(void) HandleNotification(APO_NOTIFICATION* apoNotification) override;
+
+    // IAudioProcessingObjectPreferredFormatSupport — passthrough: the
+    // preferred format on one side is whatever the other side uses.
+    STDMETHODIMP GetPreferredInputFormat(IAudioMediaType* outputFormat,
+                                         IAudioMediaType** preferredFormat) override;
+    STDMETHODIMP GetPreferredOutputFormat(IAudioMediaType* inputFormat,
+                                          IAudioMediaType** preferredFormat) override;
+
 private:
+    // Non-delegating IUnknown handed to the aggregator; owns the refcount.
+    class Inner final : public IUnknown
+    {
+    public:
+        explicit Inner(KwietApo& owner) : m_owner(owner) {}
+        STDMETHODIMP QueryInterface(REFIID riid, void** ppvObject) override;
+        STDMETHODIMP_(ULONG) AddRef() override;
+        STDMETHODIMP_(ULONG) Release() override;
+
+    private:
+        KwietApo& m_owner;
+    };
+
+    explicit KwietApo(IUnknown* pUnkOuter);
     ~KwietApo();
 
-    std::atomic<ULONG> m_refCount{ 1 };
+    Inner m_inner{ *this };
+    IUnknown* m_controlling = nullptr;   // pUnkOuter when aggregated, else &m_inner
+    std::atomic<ULONG> m_refCount{ 1 };  // owned by Inner
 
     // m_locked gates the RT path: written by LockForProcess/UnlockForProcess
     // (release), read by APOProcess (acquire) so m_bytesPerFrame is visible.
@@ -73,4 +119,9 @@ private:
     GUID   m_processingMode{};      // from APOInitSystemEffects2, zero otherwise
     UINT32 m_samplesPerFrame = 0;   // interleaved channel count
     UINT32 m_bytesPerFrame = 0;
+
+    // User-facing effect state (Settings can toggle it via SE3). Milestone 1:
+    // purely declarative, the passthrough never alters audio. Milestone 2
+    // wires it to the DSP bypass.
+    std::atomic<bool> m_effectEnabled{ true };
 };

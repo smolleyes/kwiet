@@ -97,13 +97,51 @@ jalon 4.)
 |---|---|
 | Cible | x64 uniquement (audiodg 64 bits) ; ARM64 plus tard |
 | CRT | statique `/MT` — pas de dépendance VCRedist dans audiodg |
-| COM | implémentation directe sans ATL ; `ThreadingModel=Both` ; enregistrement sous `HKLM\Software\Classes\CLSID` |
-| Flags APO | `APO_FLAG_DEFAULT` (formats identiques in/out imposés par l'engine, vérifiés quand même à `LockForProcess`) |
+| COM | implémentation directe sans ATL, **agrégeable** (pattern inner/outer : audiodg crée les APO avec `pUnkOuter` non nul et `riid=IID_IUnknown` ; `CLASS_E_NOAGGREGATION` = éviction silencieuse) ; `ThreadingModel=Both` ; enregistrement sous `HKLM\Software\Classes\CLSID` |
+| Catalogue APO | `HKLM\Software\Classes\AudioEngine\AudioProcessingObjects\{CLSID}` écrit par `DllRegisterServer` (équivalent du `RegisterAPO()` des samples : FriendlyName, Flags, connexions, `APOInterfaceN`) — lu par AudioEndpointBuilder à la découverte |
+| Interfaces | `IAudioProcessingObject[RT\|Configuration]` + contrat Windows 11 complet : `IAudioSystemEffects3` (requis, sinon éviction), `IAudioProcessingObjectNotifications` (0 souscription), `IAudioProcessingObjectPreferredFormatSupport` (pas de préférence). Une fois SE3 exposé, `Initialize` reçoit `APOInitSystemEffects3` (80 octets) et non plus SE2 |
+| Flags APO | `APO_FLAG_INPLACE \| APO_FLAG_DEFAULT` — tous les APO opérationnels constatés (Realtek, Microsoft) portent INPLACE ; `APOProcess` gère src==dst |
 | Formats | float32 interleaved uniquement (`KSDATAFORMAT_SUBTYPE_IEEE_FLOAT`) |
-| `GetEffectsList` | vide au jalon 1 ; exposera `KWIET_EFFECT_NoiseSuppression` au jalon 2 |
+| `GetEffectsList`/SE3 | expose `KWIET_EFFECT_NoiseSuppression` (contrôlable via `SetAudioSystemEffectState`) — un APO sans effet déclaré n'a aucune raison d'être inséré |
 | `GetLatency` | 0 au jalon 1 ; retard fixe du ring au jalon 2 |
-| DLL | `C:\Program Files\Kwiet\KwietApo.dll` (lisible par le service audio) |
+| DLL | **`C:\Windows\System32\KwietApo.dll`** — audiodg résout les APO par NOM DE FICHIER via l'ordre de recherche système (System32, System, Windows, PATH…), jamais par le chemin `InprocServer32` (constaté au procmon). Convention INF des APO (`DestinationDirs=11`) |
+| SDK | header `IAudioSystemEffects3`/`APOInitSystemEffects3` extrait dans `apo/src/KwietSe3.h` (le SDK 19041 local prédate ces types) ; référence complète vendored dans `apo/third_party/winsdk/` (win32metadata, MIT) |
 | APO non signé | `HKLM\...\CurrentVersion\Audio\DisableProtectedAudioDG = 1` en dev, retiré à la désinstallation ; disparaîtra avec la signature SignPath |
+| Écriture FxProperties | .NET `OpenSubKey` à droits minimaux (`SetValue\|QueryValues`) : l'ACL de MMDevices n'accorde pas `KEY_WRITE` aux administrateurs (pas de `CreateSubKey`), donc `New-ItemProperty` échoue en accès refusé — constaté sur machine réelle |
+
+## 7bis. Constats de terrain — Windows 11 build 26200 (jalon 1, machine réelle)
+
+Séquence observée (log dev de la DLL + procmon) sur un endpoint de capture USB
+(Plantronics), APO enregistré en MFX (`,6`) :
+
+1. AudioEndpointBuilder lit les valeurs FX, interroge le catalogue APO, puis
+   audiodg charge la DLL (une fois placée dans System32) et crée les instances
+   **par agrégation**.
+2. ~66 instanciations *discovery* (`InitializeForDiscoveryOnly=1`, mode SPEECH)
+   avec `GetEffectsList` + `GetApoNotificationRegistrationInfo`.
+3. **2 instanciations réelles** (`discoveryOnly=0`, modes DEFAULT et
+   COMMUNICATIONS) : `Initialize` S_OK → QI des interfaces optionnelles (AEC,
+   CustomFormats, Notifications2, une interface non documentée
+   `{69E1F79F-...}`) → `GetPreferredOutputFormat` → **destruction immédiate**.
+   Jamais de `IsInputFormatSupported` ni `LockForProcess`, quel que soit le
+   retour de `GetPreferredOutputFormat` (S_OK+format ou E_NOTIMPL) et quels que
+   soient les slots essayés (MFX, SFX, LFX, EFX, CompositeFX `,13`).
+4. Les effets réellement actifs sur les endpoints de cette machine proviennent
+   d'un **effect pack logiciel** (`SWD\DRIVERENUM\...VocaEffectPack`, propriété
+   `{9e6136e0-...},100` sur l'endpoint) : les clés `CompositeFX` (`,13`/`,14`)
+   ne sont qu'un reflet — les modifier à la main est sans effet sur le graphe.
+
+Hypothèse de travail : sur ce build (canal récent), l'insertion d'APO tiers
+« registry-only » dans les pipes de capture est refusée en fin de négociation ;
+le chemin officiel passe par un package d'effets (INF `AddSoftware` /
+DeviceExtension). À vérifier :
+
+- comportement identique ou non sur **Windows 11 stable (23H2/24H2) en VM** —
+  c'était la cible de test du jalon 1 ;
+- test témoin **Equalizer APO** sur la même machine (charge-t-il encore ?) ;
+- rétro-ingénierie de la déclaration du VocaEffectPack (clés sous
+  `HKLM\SYSTEM\...\Enum\SWD\DRIVERENUM`, INF associé) pour reproduire le
+  mécanisme.
 
 ## 8. Questions ouvertes
 

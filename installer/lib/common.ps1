@@ -8,8 +8,13 @@ Set-StrictMode -Version 3.0
 # Garder les deux synchronisés.
 $script:KwietClsid      = '{65D564E6-9709-4F5C-85CF-449D92949CFE}'
 $script:KwietDllName    = 'KwietApo.dll'
-$script:KwietInstallDir = Join-Path $env:ProgramFiles 'Kwiet'
-$script:KwietDllTarget  = Join-Path $script:KwietInstallDir $script:KwietDllName
+# audiodg charge les APO par NOM DE FICHIER via l'ordre de recherche système
+# (constaté au procmon) : la DLL doit vivre dans System32, comme les APO
+# installés par INF (DestinationDirs=11).
+$script:KwietDllTarget  = Join-Path $env:windir "System32\$($script:KwietDllName)"
+# Ancien emplacement (installs antérieures au correctif) — nettoyé à la désinstallation.
+$script:KwietLegacyDir  = Join-Path $env:ProgramFiles 'Kwiet'
+$script:KwietLegacyDll  = Join-Path $script:KwietLegacyDir $script:KwietDllName
 
 # --- Clés registre ------------------------------------------------------------
 $script:MMCaptureKey   = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture'
@@ -17,6 +22,8 @@ $script:MMCaptureReg   = 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevic
 $script:AudioPolicyKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Audio'
 $script:AudioPolicyReg = 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Audio'
 $script:ClsidRegKey    = "HKLM:\SOFTWARE\Classes\CLSID\$($script:KwietClsid)"
+# Catalogue APO lu par AudioEndpointBuilder (écrit par DllRegisterServer).
+$script:ApoCatalogKey  = "HKLM:\SOFTWARE\Classes\AudioEngine\AudioProcessingObjects\$($script:KwietClsid)"
 
 # Valeurs FxProperties : nom = "{fmtid},pid" ; pid : 5 = SFX, 6 = MFX, 7 = EFX.
 # PKEY_FX_(Stream|Mode|Endpoint)EffectClsid :
@@ -77,6 +84,53 @@ function Get-KwietCaptureEndpoints {
 
 function Get-KwietFxKeyPath([string]$EndpointId) {
     return Join-Path (Join-Path $script:MMCaptureKey $EndpointId) 'FxProperties'
+}
+
+function Open-KwietFxNetKey([string]$EndpointId) {
+    # Ouvre FxProperties via .NET avec les droits MINIMAUX (SetValue|QueryValues).
+    # Nécessaire : l'ACL de MMDevices n'accorde aux administrateurs que SetValue
+    # (pas CreateSubKey), or le provider registre de PowerShell demande KEY_WRITE
+    # complet -> New-ItemProperty/Remove-ItemProperty échouent en « accès refusé ».
+    $sub = "SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture\$EndpointId\FxProperties"
+    $rights = [System.Security.AccessControl.RegistryRights]::SetValue -bor
+              [System.Security.AccessControl.RegistryRights]::QueryValues
+    return [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey(
+        $sub, [Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree, $rights)
+}
+
+function Set-KwietFxValue {
+    param(
+        [Parameter(Mandatory)][string]$EndpointId,
+        [Parameter(Mandatory)][string]$ValueName,
+        [Parameter(Mandatory)][object]$Value
+    )
+    $key = Open-KwietFxNetKey $EndpointId
+    if ($null -eq $key) {
+        throw "Clé FxProperties absente pour l'endpoint $EndpointId (normalement créée par AudioEndpointBuilder) — cas non géré."
+    }
+    try {
+        if ($Value -is [array]) {
+            $key.SetValue($ValueName, [string[]]$Value, [Microsoft.Win32.RegistryValueKind]::MultiString)
+        } else {
+            $key.SetValue($ValueName, [string]$Value, [Microsoft.Win32.RegistryValueKind]::String)
+        }
+    } finally {
+        $key.Close()
+    }
+}
+
+function Remove-KwietFxValue {
+    param(
+        [Parameter(Mandatory)][string]$EndpointId,
+        [Parameter(Mandatory)][string]$ValueName
+    )
+    $key = Open-KwietFxNetKey $EndpointId
+    if ($null -eq $key) { return }
+    try {
+        $key.DeleteValue($ValueName, $false)   # $false : silencieux si absente
+    } finally {
+        $key.Close()
+    }
 }
 
 function Get-KwietInstalledTargets {
