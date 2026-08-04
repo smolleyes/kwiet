@@ -270,6 +270,33 @@ et je les avais confondus :
 Réserves : jamais tenté avec un certificat commercial sur une machine propre, et
 Windows en mode S exige WHQL quelle que soit la classe.
 
+#### Ce que fait un projet comparable
+
+[`msdx321/Aec3APO`](https://github.com/msdx321/Aec3APO) est un pack d'effets
+tiers de même nature (APO usermode, INF composant + extension). Son
+`installer/sign-install.ps1` fait **exactement** ce que nous faisons : il crée un
+certificat auto-signé, l'ajoute à `LocalMachine\Root` **et**
+`LocalMachine\TrustedPublisher`, signe le catalogue, puis appelle
+`pnputil /add-driver … /install`. Ni mode test-signing, ni certificat
+commercial, ni Partner Center — et son paquet s'installait bien sur cette
+machine. C'est une confirmation indépendante qu'aucune attestation n'est en jeu
+pour un paquet sans binaire noyau.
+
+Deux enseignements de comparaison :
+
+- **À reprendre** : ils **horodatent** leur signature (`/tr … /td SHA256`). Sans
+  horodatage, la signature devient invalide dès l'expiration du certificat, y
+  compris pour les paquets déjà posés chez les utilisateurs. Adopté.
+- **À ne pas reprendre pour une diffusion publique** : planter un certificat
+  auto-signé dans `LocalMachine\Root` installe une **autorité racine** sur la
+  machine de l'utilisateur. Cette racine peut ensuite cautionner n'importe quoi
+  — tout binaire, et tout certificat TLS pour n'importe quel domaine. C'est
+  acceptable sur une machine de développement dont on maîtrise le cycle de vie ;
+  ça ne l'est pas dans un installeur distribué à des inconnus, et le README
+  d'Aec3APO ne le signale pas. La voie propre reste le certificat de release
+  tiers, qui chaîne vers une racine publique déjà présente : rien à ajouter au
+  magasin.
+
 ### Cycle de vie observé (trace procmon, build 26200)
 
 Au démarrage d'AudioEndpointBuilder, pour **chaque** pack installé (Voice

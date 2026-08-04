@@ -28,6 +28,11 @@ param(
     [string]$Version,
     [string]$CertPath,
     [string]$CertPassword,
+
+    # Sans horodatage, la signature devient invalide le jour où le certificat
+    # expire — y compris pour les paquets déjà installés chez les utilisateurs.
+    # Passer une chaîne vide pour construire hors ligne.
+    [string]$TimestampUrl = 'http://timestamp.digicert.com',
     [string]$ApoDll,
     [string]$DspDll,
     [string]$OutDir
@@ -134,6 +139,7 @@ foreach ($tool in $signtool, $makecat) {
 
 $signArgs = @('sign', '/fd', 'SHA256', '/f', $CertPath)
 if ($CertPassword) { $signArgs += @('/p', $CertPassword) }
+if ($TimestampUrl) { $signArgs += @('/tr', $TimestampUrl, '/td', 'SHA256') }
 
 foreach ($binary in 'KwietApo.dll', 'kwiet_dsp.dll') {
     & $signtool @signArgs (Join-Path $OutDir $binary) | Out-Null
