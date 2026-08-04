@@ -812,12 +812,16 @@ n'est plus déclarative.** Il reste deux explications :
      priorité : c'est la seule inconnue franche du dossier.
    - `{B1176E34-...}` `IAudioSystemEffectsCustomFormats`.
 
-2. **Le niveau de confiance.** Voice Clarity est signée par Microsoft ; nous
+2. **Le niveau de confiance.** ~~Voice Clarity est signée par Microsoft ; nous
    utilisons un certificat de test auto-signé. Le rôle d'annuleur d'écho du
    pipe communications exige peut-être une signature d'attestation, là où le
-   pipe DEFAULT se contente d'un package accepté par `pnputil`. Hypothèse
-   coûteuse à tester (il faut un vrai certificat), mais elle expliquerait
-   l'ensemble des observations.
+   pipe DEFAULT se contente d'un package accepté par `pnputil`.~~
+
+   **Écartée** (2026-08-04). D'abord parce que Kwiet traite désormais le micro
+   de Meet avec ce même certificat de test, sans rien changer à la signature —
+   voir §11bis. Ensuite parce que l'hypothèse reposait sur une confusion :
+   l'attestation relève de la politique de chargement des binaires **noyau**, et
+   n'a rien à dire sur un APO usermode. Voir §8, tableau des deux régimes.
 
 ### L'expérience de contrôle qui manquait
 
