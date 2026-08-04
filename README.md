@@ -140,14 +140,14 @@ cmake --build apo/build --config Release
 # 2. Le DSP (Rust, embarque le modèle DeepFilterNet3)
 cd dsp ; cargo build --release ; cd ..
 
-# 3. Le pack d'effets, signé
-.\installer\effectpack\build-package.ps1 -Version 0.2.1 `
+# 3. Le pack d'effets, signé et horodaté
+.\installer\effectpack\build-package.ps1 -Version 0.2.2 `
     -CertPath mon-certificat.pfx -CertPassword $env:PFX_PW
 
 # 4. L'application et l'installeur
 cd ui ; npm ci ; npm run tauri build
-# -> ui/src-tauri/target/release/bundle/msi/Kwiet_0.2.1_x64_fr-FR.msi
-#    ui/src-tauri/target/release/bundle/msi/Kwiet_0.2.1_x64_en-US.msi
+# -> ui/src-tauri/target/release/bundle/msi/Kwiet_0.2.2_x64_fr-FR.msi
+#    ui/src-tauri/target/release/bundle/msi/Kwiet_0.2.2_x64_en-US.msi
 ```
 
 Le format est **MSI** et non NSIS : les stubs NSIS déclenchent régulièrement des
