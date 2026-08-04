@@ -1230,6 +1230,57 @@ inaudible pour son interlocuteur ; dans Meet, tout passe. Même casque, même
 micro, même instant. C'est la meilleure démonstration de la session, et elle
 établit aussi que **Voice Clarity ne fonctionne pas davantage dans Chrome**.
 
+## 17. Identifier les interfaces refusées — méthode et résultats (2026-08-04)
+
+Windows réclamait sept interfaces qu'on refusait, toutes inconnues. Aucune n'est
+dans le registre, aucune n'est dans le SDK 19041 installé, aucune n'est
+indexée sur le web. La méthode qui a marché :
+
+1. **Chercher le GUID sous forme binaire** dans les modules audio de Windows.
+   Un GUID en mémoire est little-endian sur ses trois premiers champs : une
+   recherche textuelle passe à côté. `{69E1F79F-…}` apparaît dans `AudioEng.dll`,
+   `AudioSes.dll`, `audiosrv.dll` et **`VirtualSurroundApo.dll`** — ce dernier
+   étant un APO Microsoft, donc quelque chose qui *implémente* l'interface.
+2. **Lire les GUID voisins.** Dans une table `.rdata` ils sont contigus. Celui
+   qu'on cherchait est encadré par `IAudioProcessingObject` et
+   `IAudioProcessingObjectRT` : c'est bien la table de QueryInterface d'un APO,
+   et l'inconnue appartient à la même famille.
+3. **Regrepper les en-têtes vendorés** avec les voisines. Deux tombent :
+
+| GUID | Interface |
+|---|---|
+| `{51CBD3C4-F1F3-4D2F-A0E1-7E9C4DD0FEB3}` | `IAudioProcessingObjectPreferredFormatSupport` |
+| `{CA2CFBDE-A9D6-4EB0-BC95-C4D026B380F0}` | `IAudioProcessingObjectNotifications2` |
+
+### `IAudioProcessingObjectPreferredFormatSupport` — implémentée, en mono
+
+Le §7bis la déclarait volontairement absente, sur l'observation que répondre
+`E_NOTIMPL` laissait le moteur bloqué. La bonne réponse n'était ni de la retirer
+ni de répondre « je ne sais pas », mais de **dire le format dans lequel le
+moteur travaille réellement** : AEC3 et DeepFilterNet3 sont mono tous les deux,
+les canaux sont sommés à l'entrée et le résultat réétalé.
+
+Résultat mesuré : le verrouillage passe de `2->2 ch` à **`2->1 ch`**. La
+négociation change donc bien, et `GetPreferredOutputFormat` est appelée et
+honorée. Non-régression vérifiée sur capture normale : 0 décrochage, 0 erreur.
+
+`CreateAudioMediaTypeFromUncompressedAudioFormat` vit dans
+`audiomediatypecrt.lib`, qui traîne une dépendance ATL absente de cette
+installation. `IAudioMediaType` compte quatre méthodes : `MonoMediaType.h`
+l'implémente en quarante lignes, ce qui évite d'imposer un composant Visual
+Studio entier au projet.
+
+### Ce que ça ne débloque toujours pas
+
+Chrome. Verrouillage relâché après 3 ms, comme avant. Restent refusées, par
+fréquence : `{69E1F79F-…}` (393 fois, la seule inconnue franche qui reste),
+`{F235855F-…}` (`IApoAcousticEchoCancellation2`), `{B1176E34-…}`
+(`IAudioSystemEffectsCustomFormats`), `{CA2CFBDE-…}` (`…Notifications2`).
+
+Les deux dernières sont désormais nommées et implémentables. `{69E1F79F-…}`
+demanderait les symboles publics de `VirtualSurroundApo.dll` pour connaître sa
+signature.
+
 ## 8. Questions ouvertes
 
 - **`APOInitSystemEffects3`** (Win11 22H2+) : layout différent de SE2 — le

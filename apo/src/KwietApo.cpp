@@ -4,6 +4,7 @@
 
 #include <cstring>
 
+#include "MonoMediaType.h"
 #include "KwietDevLog.h"
 #include "Module.h"
 
@@ -12,6 +13,9 @@ namespace {
 // KSDATAFORMAT_SUBTYPE_IEEE_FLOAT, defined locally to avoid ksmedia.h.
 constexpr GUID kIeeeFloatSubtype = {
     0x00000003, 0x0000, 0x0010, { 0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71 } };
+
+// KSAUDIO_SPEAKER_MONO, same reason.
+constexpr DWORD kSpeakerMono = 0x00000004; // SPEAKER_FRONT_CENTER
 
 #ifdef APOERR_FORMAT_NOT_SUPPORTED
 constexpr HRESULT kFormatNotSupported = APOERR_FORMAT_NOT_SUPPORTED;
@@ -123,20 +127,19 @@ HRESULT KwietApo::Inner::QueryInterface(REFIID riid, void** ppvObject)
         *ppvObject = static_cast<IAudioSystemEffects3*>(&o);
     } else if (riid == __uuidof(IAudioProcessingObjectNotifications)) {
         *ppvObject = static_cast<IAudioProcessingObjectNotifications*>(&o);
-        // NOTE: IAudioProcessingObjectPreferredFormatSupport is deliberately
-        // NOT offered. Implementing it and answering E_NOTIMPL is not the same
-        // as not having it: the engine must resolve an output format for the
-        // communications pipe, and "I don't know" leaves it stuck, whereas
-        // E_NOINTERFACE sends it to the normal IsOutputFormatSupported
-        // negotiation. Aec3APO -- a third-party AEC APO that works -- does not
-        // implement it either. The methods are kept for a future version that
-        // answers properly with a mono format.
     } else if (riid == __uuidof(IApoAuxiliaryInputConfiguration)) {
         KWIET_LOG("QI ok: IApoAuxiliaryInputConfiguration");
         *ppvObject = static_cast<IApoAuxiliaryInputConfiguration*>(&o);
     } else if (riid == __uuidof(IApoAuxiliaryInputRT)) {
         KWIET_LOG("QI ok: IApoAuxiliaryInputRT");
         *ppvObject = static_cast<IApoAuxiliaryInputRT*>(&o);
+    } else if (riid == __uuidof(IAudioProcessingObjectPreferredFormatSupport)) {
+        // Now answered properly, with a mono float32 format. It used to be
+        // withheld because replying E_NOTIMPL left the communications pipe
+        // unable to resolve a format; replying with the format the engine
+        // genuinely works in is the honest fix.
+        KWIET_LOG("QI ok: IAudioProcessingObjectPreferredFormatSupport");
+        *ppvObject = static_cast<IAudioProcessingObjectPreferredFormatSupport*>(&o);
     } else if (riid == __uuidof(IApoAcousticEchoCancellation)) {
         // Advertised, and honoured: the reference stream reaches WebRTC's AEC3
         // in the DSP worker, ahead of the denoiser. See docs/architecture.md
@@ -645,30 +648,57 @@ void KwietApo::HandleNotification(APO_NOTIFICATION* apoNotification)
 // ---------------------------------------------------------------------------
 // IAudioProcessingObjectPreferredFormatSupport
 
+// Builds a mono, float32 media type from `model`, keeping its sample rate.
+//
+// Mono is not a compromise here, it is what the engine actually does:
+// DeepFilterNet3 and AEC3 are both mono, so the channels are summed on the way
+// in and the single result is spread back out. Saying so lets the audio engine
+// stop carrying channels we immediately discard -- and it is what a
+// communications client asks for anyway.
+static HRESULT MakeMonoFloat32(IAudioMediaType* model, IAudioMediaType** out)
+{
+    if (out == nullptr) {
+        return E_POINTER;
+    }
+    *out = nullptr;
+    if (model == nullptr) {
+        return E_POINTER;
+    }
+
+    UNCOMPRESSEDAUDIOFORMAT fmt{};
+    HRESULT hr = model->GetUncompressedAudioFormat(&fmt);
+    if (FAILED(hr)) {
+        return hr;
+    }
+
+    fmt.guidFormatType = kIeeeFloatSubtype;
+    fmt.dwSamplesPerFrame = 1;
+    fmt.dwChannelMask = kSpeakerMono;
+    fmt.dwBytesPerSampleContainer = sizeof(float);
+    fmt.dwValidBitsPerSample = 32;
+
+    MonoMediaType* type = MonoMediaType::Create(fmt);
+    if (type == nullptr) {
+        return E_OUTOFMEMORY;
+    }
+    *out = type;
+    return S_OK;
+}
+
 HRESULT KwietApo::GetPreferredInputFormat(IAudioMediaType* outputFormat,
                                           IAudioMediaType** preferredFormat)
 {
-    UNREFERENCED_PARAMETER(outputFormat);
-    KWIET_LOG("GetPreferredInputFormat -> E_NOTIMPL (no preference)");
-    if (preferredFormat != nullptr) {
-        *preferredFormat = nullptr;
-    }
-    // No format preference: a 1:1 passthrough accepts whatever the pipe uses.
-    // Returning S_OK with a format here makes the engine treat the APO as a
-    // format converter and drop it from the mode pipe (observed empirically);
-    // E_NOTIMPL falls back to the standard negotiation.
-    return E_NOTIMPL;
+    const HRESULT hr = MakeMonoFloat32(outputFormat, preferredFormat);
+    KWIET_LOG("GetPreferredInputFormat -> mono float32, hr=0x%08lX", hr);
+    return hr;
 }
 
 HRESULT KwietApo::GetPreferredOutputFormat(IAudioMediaType* inputFormat,
                                            IAudioMediaType** preferredFormat)
 {
-    UNREFERENCED_PARAMETER(inputFormat);
-    KWIET_LOG("GetPreferredOutputFormat -> E_NOTIMPL (no preference)");
-    if (preferredFormat != nullptr) {
-        *preferredFormat = nullptr;
-    }
-    return E_NOTIMPL;
+    const HRESULT hr = MakeMonoFloat32(inputFormat, preferredFormat);
+    KWIET_LOG("GetPreferredOutputFormat -> mono float32, hr=0x%08lX", hr);
+    return hr;
 }
 
 // ---------------------------------------------------------------------------

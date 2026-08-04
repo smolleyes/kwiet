@@ -34,6 +34,7 @@ add_library(kwiet_apo SHARED
     src/KwietApo.cpp
     src/KwietApo.def
     src/KwietApo.h
+    src/MonoMediaType.h
     src/KwietDevLog.cpp
     src/KwietDevLog.h
     src/KwietGuids.h
