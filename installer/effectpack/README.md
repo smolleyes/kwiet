@@ -29,8 +29,10 @@ Get-PnpDevice -Class AudioProcessingObject        # device « Kwiet » attendu
 
 > Le certificat auto-signé est ajouté aux magasins **machine** `Root` et
 > `TrustedPublisher` : acceptable en dev, à retirer ensuite
-> (`-RemoveCert`). La distribution passera par une signature attestation
-> (Partner Center).
+> (`-RemoveCert`). La distribution demandera un certificat de signature de code
+> commercial — pas une signature attestation : celle-ci ne concerne que les
+> pilotes noyau, et Kwiet n'en contient aucun. Détail dans
+> `docs/architecture.md`.
 
 ## ⚠️ Étape indispensable après l'installation
 

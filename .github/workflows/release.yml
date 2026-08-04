@@ -166,8 +166,9 @@ jobs:
           > d'effets : l'application s'installera, le micro ne sera pas traité,
           > et le panneau affichera « Pack d'effets absent ».
           >
-          > Rendre cette version installable demande une signature attestation
-          > via le Partner Center. Voir le README.
+          > Il faut pour cela un certificat de signature de code commercial —
+          > pas une signature attestation, qui ne concerne que les pilotes
+          > noyau. Voir le README.
           "@
           }
           $assets = @(Get-ChildItem "$dir/*.msi" | ForEach-Object { $_.FullName })

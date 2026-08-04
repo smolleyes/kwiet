@@ -89,12 +89,20 @@ Uninstalling removes the pack from the driver store along with the app.
   falls back to passthrough rather than resampling blind.
 
 > [!WARNING]
-> **Signing.** Released binaries are signed with a development certificate,
-> which is enough to build and test locally but **not** to install cleanly on
-> someone else's machine: Windows refuses a driver package whose catalogue does
-> not chain to a trusted authority. Public distribution needs attestation
-> signing through the Partner Center. That is not in place yet, and it is the
-> main obstacle to Kwiet being installable by anyone.
+> **Signing.** Released binaries are signed with a development certificate. That
+> is enough to build and test here, where the certificate sits in the machine's
+> trust stores, but **not** on anyone else's machine: Windows refuses a driver
+> package whose catalogue does not chain to a trusted authority.
+>
+> What it takes to fix: an ordinary **commercial code-signing certificate**.
+> Microsoft's
+> [PnP device installation signing requirements](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/pnp-device-installation-signing-requirements--windows-vista-and-later-)
+> ask that the catalogue be signed "by WHQL **or** by a third-party release
+> certificate". The Dev Portal requirement is scoped to **kernel-mode** drivers,
+> and Kwiet contains none — it is a user-mode COM DLL.
+>
+> Unverified all the same: no install has been attempted with a commercial
+> certificate on a clean machine. And Windows in S mode requires WHQL regardless.
 
 ## The panel
 
@@ -162,7 +170,8 @@ Icons and logo are generated: `node assets/build-assets.mjs`.
 
 Stated here rather than left to be discovered in use:
 
-- **Attestation signing** — see the warning above. This is the blocker.
+- **Release signing** — see the warning above. This is what blocks distribution
+  beyond the development machine.
 - **Resampling** — outside 48 kHz, Kwiet falls back to passthrough.
 - **48 h soak** — sample-rate changes, hot-plug, sleep and resume, several apps
   at once: never held over a long run.

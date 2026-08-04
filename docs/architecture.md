@@ -256,8 +256,19 @@ manuelle écrase la valeur du pack (le marqueur `,100` disparaît).
 
 Signature : `pnputil /add-driver` accepte un package signé par un certificat
 **auto-signé** placé dans `LocalMachine\Root` + `TrustedPublisher`, sans mode
-test signing (validé sur cette machine). La distribution passera par une
-signature attestation Partner Center.
+test signing (validé sur cette machine).
+
+Pour la distribution, un **certificat de signature de code commercial** ordinaire
+devrait suffire — pas de signature attestation. Les deux régimes sont distincts,
+et je les avais confondus :
+
+| Régime | Ce qu'il exige | Nous concerne ? |
+|---|---|---|
+| [Signature à l'installation PnP](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/pnp-device-installation-signing-requirements--windows-vista-and-later-) | catalogue signé « par WHQL **ou** par un certificat de release tiers (SPC ou certificat commercial) » | **oui** — c'est ce qui gouverne `pnputil /add-driver` |
+| [Politique de signature des pilotes](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/kernel-mode-code-signing-policy--windows-vista-and-later-) (Dev Portal, EV, depuis 1607) | signature Microsoft pour qu'un binaire **noyau** puisse se charger | **non** — Kwiet n'a aucun binaire noyau, c'est une DLL COM usermode |
+
+Réserves : jamais tenté avec un certificat commercial sur une machine propre, et
+Windows en mode S exige WHQL quelle que soit la classe.
 
 ### Cycle de vie observé (trace procmon, build 26200)
 

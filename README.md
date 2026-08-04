@@ -95,12 +95,21 @@ l'application.
 
 > [!WARNING]
 > **Signature.** Les binaires publiés sont signés avec un certificat de
-> développement, ce qui suffit pour construire et tester chez soi mais **pas**
-> pour une installation propre sur une machine tierce : Windows refuse un
-> package pilote dont le catalogue ne remonte pas à une autorité de confiance.
-> La distribution publique demande une signature attestation via le Partner
-> Center. Ce n'est pas encore en place, et c'est le principal obstacle avant que
-> Kwiet soit installable par tout le monde.
+> développement. Il suffit à construire et tester ici, où ce certificat est
+> installé dans les magasins de confiance, mais **pas** sur une machine tierce :
+> Windows refuse un package pilote dont le catalogue ne remonte pas à une
+> autorité de confiance.
+>
+> Ce qu'il faut pour y remédier : un **certificat de signature de code
+> commercial** ordinaire. La documentation Microsoft sur les
+> [exigences de signature à l'installation PnP](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/pnp-device-installation-signing-requirements--windows-vista-and-later-)
+> demande que le catalogue soit signé « par WHQL **ou** par un certificat de
+> release tiers ». L'obligation de passer par le Dev Portal est scopée aux
+> pilotes **noyau** — Kwiet n'en contient aucun, c'est une DLL COM usermode.
+>
+> Non vérifié pour autant : aucune installation n'a été tentée avec un
+> certificat commercial sur une machine propre. Et Windows en mode S exige WHQL
+> quoi qu'il arrive.
 
 ## Le panneau
 
@@ -169,7 +178,8 @@ Les icônes et le logo sont générés : `node assets/build-assets.mjs`.
 
 Par honnêteté, plutôt que de le laisser découvrir à l'usage :
 
-- **Signature attestation** — voir l'avertissement plus haut. C'est le blocage.
+- **Signature de release** — voir l'avertissement plus haut. C'est le blocage
+  pour une diffusion au-delà de la machine de développement.
 - **Rééchantillonnage** — hors 48 kHz, Kwiet passe en passthrough.
 - **Soak 48 h** — changements de fréquence, débranchement à chaud, veille et
   reprise, plusieurs applications : jamais tenu sur une durée longue.
