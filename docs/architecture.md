@@ -1325,16 +1325,44 @@ L'hypothèse tenable est donc plus étroite : `IAudioProcessingObjectInternal`
 serait requise **dans le pipe communications**, pas pour un APO tiers en
 général. Elle reste une hypothèse.
 
-### L'expérience qui trancherait
+### ✅ L'expérience décisive : Voice Clarity échoue aussi
 
-Sélectionner **Voice Clarity** au lieu de Kwiet, lancer Chrome avec le flag, et
-mesurer si la suppression de bruit s'applique. Voice Clarity est un pack
-d'effets Microsoft : il implémente vraisemblablement l'interface interne.
+Voice Clarity sélectionné à la place de Kwiet, Chrome avec
+`EnforceSystemEchoCancellation` : **même résultat, la suppression de bruit ne
+s'applique pas.** Sur Firefox, en revanche, Voice Clarity fonctionne — comme
+Kwiet.
 
-- Si Voice Clarity fonctionne dans Chrome et pas nous → le pipe communications
-  réserve l'accès aux APO Microsoft, et c'est un mur.
-- Si Voice Clarity échoue aussi → le pipe communications n'accepte aucun pack
-  d'effets, l'interface interne n'y est pour rien, et le problème est ailleurs.
+Cela clôt la question, et dans le bon sens :
+
+- l'interface interne **n'est pas** un péage réservant l'accès à Microsoft ;
+- le pipe communications **n'accepte aucun pack d'effets sélectionnable**, pas
+  même celui de Microsoft, sur le système de Microsoft ;
+- ce n'est ni notre code, ni notre signature, ni notre format.
+
+**C'est une conséquence de la conception de Chromium**, qui pose
+`eCategory = AudioCategory_Communications` sur toute capture `getUserMedia`.
+Firefox ne le fait pas, et tout fonctionne. Le grief est à porter chez
+Chromium, pas chez Microsoft.
+
+### Comparaison de qualité — Voice Clarity fait mieux que nous par défaut
+
+Sur Firefox, à l'écoute, réglages Kwiet à 50 / 60 / 80 dB :
+
+| | Voix | Sifflement |
+|---|---|---|
+| Kwiet à 50 dB | presque normale | passe encore, très légèrement |
+| Voice Clarity | intacte | supprimé |
+
+À prendre au sérieux : notre concurrent direct est gratuit, préinstallé, et
+meilleur à notre réglage par défaut.
+
+Explication plausible : un sifflement est **harmonique et dans la bande
+vocale**. DeepFilterNet3 est entraîné à séparer parole et bruit, et un sifflet
+ressemble spectralement à de la parole — c'est précisément le signal qu'il
+préserve. Voice Clarity emploie vraisemblablement une approche différente.
+
+À faire : une comparaison chiffrée sur source contrôlée plutôt qu'à l'oreille,
+et une revue du réglage par défaut (50 dB) qui est peut-être trop prudent.
 
 ## 8. Questions ouvertes
 
