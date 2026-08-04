@@ -66,6 +66,9 @@ jobs:
           cargo fmt --all --check
           cargo clippy --all-targets --locked -- -D warnings
           cargo test --release --locked
+          # `cargo test` builds the library for its own harness and stops there;
+          # the cdylib the effect pack ships is only emitted by `cargo build`.
+          cargo build --release --locked
 
       # Before the panel, not after: tauri-build resolves the bundle resources
       # from build.rs, so *any* cargo command on ui/src-tauri fails outright
