@@ -1069,6 +1069,88 @@ de l'appel. Troisième occurrence du même défaut : **seul le journal de l'APO 
 le bloc de contrôle prouvent quelque chose.** Tout indicateur d'application est
 une hypothèse déguisée.
 
+## 15. 🔓 Chromium n'est pas verrouillé — il est conditionnel (2026-08-04)
+
+Le §14 concluait que Chromium contourne les packs d'effets. C'est vrai **par
+défaut**, et faux dans l'absolu. La lecture du source l'établit.
+
+### Ce que fait Chromium, dans son code
+
+`media/audio/win/audio_low_latency_input_win.cc`,
+`SetCommunicationsCategoryAndMaybeRawCaptureMode` :
+
+```cpp
+audio_props.eCategory = AudioCategory_Communications;
+constexpr int kMaxRawCaptureChannels = 8;
+if (channels > 0 && channels <= kMaxRawCaptureChannels) {
+  audio_props.Options = AUDCLNT_STREAMOPTIONS_RAW;
+}
+// Use AUDCLNT_STREAMOPTIONS_NONE instead of AUDCLNT_STREAMOPTIONS_RAW if
+// system AEC has been enabled to ensure that "Voice Clarity" can kick in.
+if (aec_config_) {
+  audio_props.Options = AUDCLNT_STREAMOPTIONS_NONE;
+}
+```
+
+`aec_config_` vient de `EchoCancellationConfig::Create(params, …)`, non nul
+seulement si `params.effects() & AudioParameters::ECHO_CANCELLER`.
+
+**Donc : dès que l'AEC système est demandée, Chromium abandonne le mode RAW et
+les effets système s'appliquent.** Le commentaire nomme même Voice Clarity.
+
+### Le levier utilisateur
+
+`chrome://flags` → **« Enforce system Echo Cancellation »**
+(`--enable-features=EnforceSystemEchoCancellation`). Windows 11 24H2
+(build 26100) minimum. Désactivé par défaut, en cours de déploiement.
+
+Pistes mortes, testées et écartées :
+
+- `echoCancellationType: 'system'` — la contrainte **n'existe plus**
+  (`getSupportedConstraints().echoCancellationType === false`) ;
+- `--enable-blink-features=ExperimentalHardwareEchoCancellation` — sans effet,
+  la fonctionnalité expérimentale a été retirée ;
+- `voiceIsolation` — exposée mais non implémentée sur Windows (ChromeOS d'abord) ;
+- `--disable-features=WASAPIRawAudioCapture` — sans effet observable.
+
+### Où ça bloque maintenant
+
+Avec le flag actif, Chrome nous fait **entrer dans le graphe** :
+
+```
+Initialize: SE3, mode=COMMUNICATIONS, discoveryOnly=0     x111
+QI ok: IApoAcousticEchoCancellation                       x166
+LockForProcess: S_OK, 2->2 ch, 48000 Hz, latency=300000   x110
+AddAuxiliaryInput                                          x55
+UnlockForProcess … refFrames=0                            2 à 12 ms plus tard
+```
+
+Windows nous accepte comme annuleur d'écho et câble le flux de référence, puis
+relâche avant qu'un échantillon ne circule, en boucle. Aucun `refFrames` non nul :
+le verrouillage n'aboutit jamais à du traitement.
+
+Hypothèses pour la suite, aucune mesurée :
+
+1. **Le contrat AEC n'est pas honoré.** On déclare l'interface sans annuler quoi
+   que ce soit — `AcceptInput` se contente de compter les trames de référence.
+   Le moteur valide peut-être davantage.
+2. **La latence annoncée.** 300000 hns = 30 ms. Le pipe communications sert
+   l'annulation d'écho, qui exige un alignement serré entre référence et micro.
+3. **Le nombre de canaux.** Chrome demande `channelCount: 1` ; on annonce
+   2 → 2. `IAudioProcessingObjectPreferredFormatSupport` n'est toujours pas
+   implémentée, et le commentaire du code prévoyait déjà « une version future
+   qui répond correctement avec un format mono ».
+4. **`{69E1F79F-6EAE-4517-BE9F-13AA90E30014}`**, réclamée 221 fois et jamais
+   identifiée depuis le jalon 1. Toujours la seule inconnue franche du dossier.
+
+### Ce que ça change pour le produit
+
+Le blocage Chromium n'est pas structurel. Il tient à un drapeau désactivé par
+défaut, que Google déploie, et à un contrat d'annuleur d'écho qu'il faudrait
+honorer pour de bon. La perspective réaliste : **Kwiet dans Chrome exigerait
+d'implémenter réellement l'annulation d'écho**, ce qui était précisément le
+chantier écarté au §11bis.
+
 ## 8. Questions ouvertes
 
 - **`APOInitSystemEffects3`** (Win11 22H2+) : layout différent de SE2 — le
