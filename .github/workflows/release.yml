@@ -6,9 +6,10 @@
 # pilotes.
 #
 # Signature : si les secrets sont présents, la DLL et le catalogue sont signés.
-# Sinon la release est publiée en brouillon et marquée non signée -- Windows
-# refusera d'installer un package pilote non signé, et il vaut mieux le dire
-# que livrer un installeur qui échoue chez l'utilisateur.
+# Sinon la release part quand même, mais ses notes disent franchement que le
+# paquet n'est pas signé -- Windows refusera d'enregistrer un package pilote
+# dont le catalogue ne remonte pas à une autorité de confiance, et il vaut mieux
+# l'écrire que laisser quelqu'un le découvrir en l'installant.
 
 name: Release
 
@@ -30,6 +31,13 @@ env:
 jobs:
   release:
     runs-on: windows-latest
+
+    # Hissé au niveau du job : une condition `if:` ne voit pas un `env:` déclaré
+    # dans l'étape qu'elle garde, et la mienne était donc toujours fausse --
+    # l'étape de signature aurait été sautée même avec les secrets en place.
+    env:
+      SIGNING_PFX: ${{ secrets.SIGNING_PFX }}
+      SIGNING_PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
 
     steps:
       - uses: actions/checkout@v4
@@ -88,8 +96,6 @@ jobs:
         id: cert
         if: env.SIGNING_PFX != ''
         shell: pwsh
-        env:
-          SIGNING_PFX: ${{ secrets.SIGNING_PFX }}
         run: |
           $bytes = [Convert]::FromBase64String($env:SIGNING_PFX)
           $path = Join-Path $env:RUNNER_TEMP 'kwiet-signing.pfx'
@@ -98,15 +104,13 @@ jobs:
 
       - name: Pack d'effets
         shell: pwsh
-        env:
-          PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
         run: |
-          $args = @('-Version', '${{ steps.version.outputs.version }}')
+          $packArgs = @('-Version', '${{ steps.version.outputs.version }}')
           if ('${{ steps.cert.outputs.path }}') {
-            $args += @('-CertPath', '${{ steps.cert.outputs.path }}',
-                       '-CertPassword', $env:PFX_PASSWORD)
+            $packArgs += @('-CertPath', '${{ steps.cert.outputs.path }}',
+                           '-CertPassword', $env:SIGNING_PFX_PASSWORD)
           }
-          ./installer/effectpack/build-package.ps1 @args
+          ./installer/effectpack/build-package.ps1 @packArgs
 
       - name: Installeur
         working-directory: ui
@@ -148,14 +152,16 @@ jobs:
             $notes += @"
 
           > [!WARNING]
-          > **Build non signé.** Windows refusera d'enregistrer le pack d'effets.
-          > Cette release est un artefact de test, pas une version installable.
+          > **Paquet non signé.** Windows refusera d'enregistrer le pack
+          > d'effets : l'application s'installera, le micro ne sera pas traité,
+          > et le panneau affichera « Pack d'effets absent ».
+          >
+          > Rendre cette version installable demande une signature attestation
+          > via le Partner Center. Voir le README.
           "@
           }
-          $draft = if ($signed) { @() } else { @('--draft') }
           $assets = @(Get-ChildItem "$dir/*.msi" | ForEach-Object { $_.FullName })
           $assets += (Resolve-Path "$dir/SHA256SUMS.txt").Path
           gh release create "v$version" @assets `
             --title "Kwiet $version" `
-            --notes $notes `
-            @draft
+            --notes $notes
