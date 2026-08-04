@@ -105,10 +105,13 @@ jobs:
       - name: Pack d'effets
         shell: pwsh
         run: |
-          $packArgs = @('-Version', '${{ steps.version.outputs.version }}')
+          # Table de hachage, pas tableau : le splatting d'un tableau passe les
+          # éléments POSITIONNELLEMENT, si bien que -Version arrivait comme
+          # valeur de $Version et la version comme valeur de $CertPath.
+          $packArgs = @{ Version = '${{ steps.version.outputs.version }}' }
           if ('${{ steps.cert.outputs.path }}') {
-            $packArgs += @('-CertPath', '${{ steps.cert.outputs.path }}',
-                           '-CertPassword', $env:SIGNING_PFX_PASSWORD)
+            $packArgs.CertPath = '${{ steps.cert.outputs.path }}'
+            $packArgs.CertPassword = $env:SIGNING_PFX_PASSWORD
           }
           ./installer/effectpack/build-package.ps1 @packArgs
 
