@@ -1,37 +1,43 @@
-# apo/ — shim COM passthrough (jalon 1)
+# apo/ — the COM shim loaded by audiodg
 
-DLL COM usermode chargée par `audiodg.exe`. Au jalon 1 : passthrough strict
-input→output, zéro DSP. Les ring buffers SPSC, le worker thread et l'appel au
-cdylib Rust (`dsp/`) arrivent au jalon 2, dans `LockForProcess`/`APOProcess`
-(voir les commentaires `Milestone 2` dans le code).
+A user-mode COM DLL that Windows' audio engine loads into `audiodg.exe`. It owns
+the real-time path, the lock-free rings, the worker thread that calls the Rust
+DSP, and the shared-memory block the panel reads.
 
-## Fichiers
+## Files
 
-| Fichier | Rôle |
+| File | Role |
 |---|---|
-| `src/KwietApo.h/.cpp` | La classe APO : `IAudioProcessingObject`, `IAudioProcessingObjectRT` (chemin temps-réel), `IAudioProcessingObjectConfiguration`, `IAudioSystemEffects2` |
-| `src/Dll.cpp` | Class factory, `DllRegisterServer` (CLSID sous `HKLM\Software\Classes`), `DllMain` |
-| `src/KwietGuids.h` | CLSID + GUID d'effet + modes de traitement (dupliqué côté installeur — garder synchronisé) |
-| `src/KwietApo.def` | Exports COM |
+| `src/KwietApo.h/.cpp` | The APO class: `IAudioProcessingObject`, `IAudioProcessingObjectRT` (real-time path), `IAudioProcessingObjectConfiguration`, `IAudioSystemEffects3`, notifications |
+| `src/DspHost.h/.cpp` | Loads `kwiet_dsp.dll` by absolute path, allocates the rings, primes latency, runs the worker |
+| `src/SpscRing.h` | Lock-free single-producer/single-consumer float ring |
+| `src/ChannelMix.h` | Channel conversion, allocation-free |
+| `src/ControlShm.h/.cpp` | Creates the named section the panel maps |
+| `src/KwietControl.h` | **The contract with the panel.** Any change here must be mirrored in `ui/src-tauri/src/control.rs` |
+| `src/KwietGuids.h` | CLSID, effect GUID, processing modes — duplicated in the installer, keep in sync |
+| `src/Dll.cpp` | Class factory, `DllRegisterServer`, `DllMain` |
 
-L'enregistrement **endpoint** (FxProperties) n'est pas fait par la DLL :
-c'est `installer/install.ps1` qui porte cette politique.
+Endpoint registration is not done by the DLL: the effect pack under
+[`../installer/effectpack/`](../installer/effectpack/) carries that policy.
 
 ## Build
 
-Prérequis : MSVC (VS 2019+, workload C++), Windows 10/11 SDK, CMake ≥ 3.21.
+Requirements: MSVC (VS 2019+, C++ workload), Windows 10/11 SDK, CMake ≥ 3.21.
 
 ```powershell
 cmake -S . -B build -A x64
 cmake --build build --config Release
-# → build/Release/KwietApo.dll  (x64, CRT statique /MT)
+# -> build/Release/KwietApo.dll  (x64, static CRT /MT)
 ```
 
-Ne jamais enregistrer la DLL sur le poste de dev — installation en VM
-uniquement (`docs/procedure-test-vm.md`).
+`-DKWIET_DEV_LOG=ON` adds a file log and a registry override for the attenuation.
+Useful while developing, never in a build you hand to anyone: it makes the APO
+obey the registry rather than the panel, silently. `build-package.ps1` refuses to
+package such a DLL for a release.
 
-## Règles du chemin RT
+## Real-time path rules
 
-`APOProcess()` : pas d'allocation, pas de lock, pas de syscall, pas de
-logging, pas de COM. Fail-open : au moindre doute, copie input→output.
-Toute violation est un bug bloquant, quel que soit le gain.
+`APOProcess()` runs on audiodg's real-time thread: no allocation, no lock, no
+system call, no logging, no COM. Fail-open — at the slightest doubt, copy input
+to output. A violation is a blocking bug whatever it buys, because an APO that
+stalls or crashes `audiodg` takes the whole machine's sound with it.

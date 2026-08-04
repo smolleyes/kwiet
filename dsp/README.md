@@ -1,61 +1,62 @@
-# dsp/ — moteur DSP Rust exposé en ABI C
+# dsp/ — the Rust noise-suppression engine, behind a C ABI
 
-Crate `cdylib` chargé par l'APO depuis le DriverStore. **Jalon 2 : effet
-trivial (atténuation fixe, −6 dB par défaut)**, destiné à valider la
-plomberie temps-réel avant d'y brancher DeepFilterNet3 (crate
-[`df`](https://github.com/Rikorose/DeepFilterNet), dual MIT/Apache-2.0).
+A `cdylib` loaded by the APO from the driver store. It wraps
+[DeepFilterNet3](https://github.com/Rikorose/DeepFilterNet) (crate `deep_filter`,
+dual MIT/Apache-2.0) with the model embedded in the DLL.
 
 ```powershell
-cargo test --release                              # 11 tests
+cargo test --release
 cargo clippy --release --all-targets -- -D warnings
-cargo build --release                             # -> target/release/kwiet_dsp.dll
+cargo build --release        # -> target/release/kwiet_dsp.dll
 ```
 
-Points non négociables (détail et raisons dans
-[`../docs/architecture.md`](../docs/architecture.md) §9) :
+Non-negotiable, with the reasoning in
+[`../docs/architecture.md`](../docs/architecture.md) §9:
 
-- **CRT statique** via `.cargo/config.toml` — sans ça la DLL importe
-  `VCRUNTIME140.dll` et peut ne pas se charger dans `audiodg`.
-- **Aucun panic ne traverse la frontière C** : `catch_unwind` à chaque point
-  d'entrée, et surtout pas `panic = "abort"` (un abort tuerait `audiodg`,
-  donc tout le son de la machine).
-- `kwiet_dsp_process` **n'alloue pas** et ne bloque pas.
+- **Static CRT** via `.cargo/config.toml`. Without it the DLL imports
+  `VCRUNTIME140.dll` and may fail to load inside `audiodg`.
+- **No panic crosses the C boundary**: `catch_unwind` at every entry point, and
+  emphatically not `panic = "abort"` — an abort would kill `audiodg`, and with
+  it every sound on the machine.
+- `kwiet_dsp_process` is called from the worker thread, never the real-time one.
 
-ABI stable, déclarée dans [`include/kwiet_dsp.h`](include/kwiet_dsp.h) :
+## ABI
+
+Declared in [`include/kwiet_dsp.h`](include/kwiet_dsp.h):
 
 ```c
-uint32_t  kwiet_dsp_abi_version(void);                              // garde anti-DLL périmée
-KwietDsp* kwiet_dsp_create(uint32_t sample_rate, uint32_t channels); // hors RT
+uint32_t  kwiet_dsp_abi_version(void);                               // guards against a stale DLL
+KwietDsp* kwiet_dsp_create(uint32_t sample_rate, uint32_t channels); // not real-time
 void      kwiet_dsp_destroy(KwietDsp*);
+uint32_t  kwiet_dsp_block_frames(void);                              // fixed frame the host must feed
 int32_t   kwiet_dsp_process(KwietDsp*, const float* in, float* out, uint32_t frames);
-void      kwiet_dsp_set_attenuation_db(KwietDsp*, float db);        // thread-safe, atomic
+void      kwiet_dsp_set_attenuation_db(KwietDsp*, float db);         // thread-safe, atomic
 ```
 
-## Dépendance DeepFilterNet3 — épinglages obligatoires
+## Dependency pins, and why they are mandatory
 
-Le crate publié sur crates.io (`deep_filter` 0.2.5, 2022) est encore DFN2 : on
-dépend donc du dépôt Git. Deux épinglages sont nécessaires pour que ça
-compile, tous deux commentés dans `Cargo.toml` :
+The crate published on crates.io (`deep_filter` 0.2.5, 2022) is still DFN2, so we
+depend on the Git repository. Two pins are needed to compile at all, both
+commented in `Cargo.toml`:
 
-- **famille `tract` en `=0.21.4`** — `deep_filter` déclare `^0.21.4`, mais
-  `tract` a renommé un champ public (`symbol_table` → `symbols`) dans une
-  version que cargo juge compatible. Résolu en 0.21.17, `deep_filter` ne
-  compile plus. L'épinglage doit être fait **dans le manifeste** :
-  `cargo update --precise` rétrograde crate par crate et casse la cohérence
-  interne de la famille (`tract-pulse-opl` exige `=` sa propre version) ;
-- **`kstring` en `2.0.2`** — la 2.0.4 exige rustc 1.96.
+- **the `tract` family at `=0.21.4`** — `deep_filter` asks for `^0.21.4`, but
+  `tract` renamed a public field (`symbol_table` → `symbols`) in a release cargo
+  considers compatible. The pin must live **in the manifest**:
+  `cargo update --precise` downgrades crate by crate and breaks the family's
+  internal coherence (`tract-pulse-opl` requires `=` its own version);
+- **`kstring` at `2.0.2`** — 2.0.4 requires rustc 1.96.
 
-Modèle : `DfParams::default()` embarque `DeepFilterNet3_onnx.tar.gz` (7,6 Mo)
-dans la DLL via la feature `default-model`. Aucun fichier à déployer à côté.
+The model ships inside the DLL: `DfParams::default()` embeds
+`DeepFilterNet3_onnx.tar.gz` (7.6 MB) through the `default-model` feature. There
+is no file to deploy next to it.
 
-## Contraintes DFN3
+## DeepFilterNet3 constraints
 
-- **48 kHz uniquement** : `kwiet_dsp_create` renvoie `NULL` pour tout autre
-  taux, l'hôte reste alors en passthrough. Le resampling reste à faire.
-- **Mono** : les canaux de l'hôte sont sommés en entrée, et le résultat mono
-  est réécrit sur tous les canaux.
-- **Trame fixe** de `kwiet_dsp_block_frames()` (480 = 10 ms) : l'hôte utilise
-  cette valeur comme taille de bloc de son worker, les rings découplant ça du
-  quantum de l'APO.
-- `process` **alloue** (tract alloue par inférence). C'est acceptable parce
-  qu'il tourne sur le worker, jamais sur le thread temps-réel.
+- **48 kHz only.** `kwiet_dsp_create` returns `NULL` for any other rate and the
+  host stays in passthrough. Resampling is still to be done.
+- **Mono.** The host's channels are summed on the way in, and the mono result is
+  written back across every channel.
+- **Fixed frame** of `kwiet_dsp_block_frames()` (480 = 10 ms). The host uses that
+  as its worker's block size; the rings decouple it from the APO's quantum.
+- `process` **allocates** — tract allocates per inference. That is acceptable
+  precisely because it runs on the worker and never on the real-time thread.

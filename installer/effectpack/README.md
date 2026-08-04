@@ -1,54 +1,65 @@
-# installer/effectpack/ — pack d'effets Kwiet (voie moderne Windows 11)
+# installer/effectpack/ — the Kwiet effect pack
 
-Remplace l'édition manuelle des `FxProperties` par endpoint (`installer/install.ps1`),
-qui **ne fonctionne plus** sur les builds Windows 11 récents : l'APO est bien
-instancié puis écarté avant `LockForProcess`. Mécanisme et constats détaillés
-dans [`../../docs/architecture.md`](../../docs/architecture.md) §7bis et §8.
+This replaces per-endpoint `FxProperties` editing, which **no longer works** on
+recent Windows 11 builds: the APO is instantiated and then dropped before
+`LockForProcess`. Mechanism and evidence in
+[`../../docs/architecture.md`](../../docs/architecture.md) §7bis and §8.
 
-Recette calquée sur le pack **Voice Clarity** de Microsoft
-(`C:\Windows\INF\oem155.inf`) et sur [Aec3APO](https://github.com/msdx321/Aec3APO).
+The recipe follows Microsoft's own **Voice Clarity** pack
+(`C:\Windows\INF\oem155.inf`) and [Aec3APO](https://github.com/msdx321/Aec3APO).
 
-| Fichier | Rôle |
+| File | Role |
 |---|---|
-| `kwiet_extension.inf` | `Class=Extension` sur `COMPUTER\Generic` → `AddComponent` crée le devnode `SWC\VEN_KWIET&AUDIO_EFFECTPACK_KWIET` |
-| `kwiet_component.inf` | `Class=AudioProcessingObject` : copie la DLL dans le DriverStore, écrit CLSID + catalogue APO + `EffectPackRegistration` (ciblage capture/micro) |
-| `sign-install-dev.ps1` | **DEV** : certificat auto-signé, signature DLL + catalogue, `pnputil /add-driver /install` des deux INF |
-| `uninstall-effectpack.ps1` | `pnputil /delete-driver /uninstall`, suppression du devnode, `-RemoveCert` pour retirer le certificat de test |
+| `kwiet_extension.inf` | `Class=Extension` on `COMPUTER\Generic` → `AddComponent` creates the `SWC\VEN_KWIET&AUDIO_EFFECTPACK_KWIET` devnode |
+| `kwiet_component.inf` | `Class=AudioProcessingObject`: copies the DLLs into the driver store, writes the CLSID, the APO catalogue and `EffectPackRegistration` (capture/microphone targeting) |
+| `new-signing-cert.ps1` | Creates the self-signed signing key. Run once |
+| `build-package.ps1` | Assembles `package/`: DLLs, INFs, signed and timestamped catalogue, public certificate |
+| `pack.ps1` | Installs or removes the pack. Called by the MSI, usable by hand to repair an installation |
+| `sign-install-dev.ps1` | Older development path: signs and installs in one step |
+| `uninstall-effectpack.ps1` | `pnputil /delete-driver /uninstall`, devnode removal, `-RemoveCert` |
 
-`package/` et `state/` sont générés localement et ignorés par git.
+`package/` and `state/` are generated locally and ignored by git. **`state/`
+holds the private signing key — it must never be committed.**
 
-## Usage (dev)
+## Usage
 
 ```powershell
-cmake --build ..\..\apo\build --config Release   # produire KwietApo.dll
-.\sign-install-dev.ps1                            # admin requis
-Get-PnpDevice -Class AudioProcessingObject        # device « Kwiet » attendu
-# ... test ...
-.\uninstall-effectpack.ps1 -RemoveCert
+# Once: create the signing key
+.\new-signing-cert.ps1 -Password (Read-Host -AsSecureString)
+
+# Each build
+cmake --build ..\..\apo\build --config Release
+.\build-package.ps1 -Version 0.2.3 -CertPath state\kwiet-signing.pfx -CertPassword ...
+
+# Install by hand (the MSI does this for you)
+.\pack.ps1 -Action install -PackageDir package
+Get-PnpDevice -Class AudioProcessingObject
+.\pack.ps1 -Action uninstall
 ```
 
-> Le certificat auto-signé est ajouté aux magasins **machine** `Root` et
-> `TrustedPublisher` : acceptable en dev, à retirer ensuite
-> (`-RemoveCert`). La distribution demandera un certificat de signature de code
-> commercial — pas une signature attestation : celle-ci ne concerne que les
-> pilotes noyau, et Kwiet n'en contient aucun. Détail dans
-> `docs/architecture.md`.
+## Signing
 
-## ⚠️ Étape indispensable après l'installation
+Windows only registers a driver package whose catalogue chains to a trusted root.
+Kwiet is signed with its own self-signed key, so `pack.ps1` adds the **public
+certificate** to the machine's `Root` and `TrustedPublisher` stores before
+calling `pnputil`, and removes it again on uninstall. The private key never ships:
+it signs at build time.
 
-Installer le pack ne l'active pas : il devient une **option** à choisir
-manuellement dans
+The certificate carries the Code Signing usage and nothing else, so it cannot
+validate TLS chains. It remains a real grant of trust all the same. A commercial
+code-signing certificate — which chains to a root already present everywhere and
+needs nothing added to anyone's stores — is the cleaner answer.
 
-`Paramètres > Système > Son > [le micro] > Améliorations audio`
+Attestation signing through the Partner Center is *not* required here: that
+governs the loading of **kernel-mode** binaries, and Kwiet contains none.
 
-où « Kwiet » apparaît à côté de « Voice Clarity » / des effets du fabricant.
-Un seul pack peut être actif par micro (« MEP » = *Multiple Effect Packs*).
-C'est `PKEY_FX_MEP_UserInterfaceClsid` dans l'INF qui rend le pack
-sélectionnable — sans cette valeur, il est installé mais invisible dans la
-liste.
+## The step no installer can take for you
 
-## Statut
+Installing the pack does not enable it. It becomes an **option** to pick by hand in
 
-✅ Validé le 2026-08-03 sur Windows 11 build 26200 : APO chargé dans
-`audiodg.exe`, `LockForProcess` OK (2 ch / 48 kHz), 8 cycles Lock/Unlock sans
-fuite, audio transmis. Détails : [`../../docs/architecture.md`](../../docs/architecture.md) §8.
+`Settings > System > Sound > [the microphone] > Audio enhancements`
+
+where "Kwiet" appears next to "Voice Clarity" and the manufacturer's effects.
+Only one pack can be active per microphone (MEP, *Multiple Effect Packs*).
+`PKEY_FX_MEP_UserInterfaceClsid` in the INF is what makes the pack selectable —
+without that value it installs and never shows up in the list.

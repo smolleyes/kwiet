@@ -1,56 +1,68 @@
-# ui/ — panneau Kwiet (Tauri v2)
+# ui/ — the Kwiet panel (Tauri v2)
 
-Application de barre d'état : état du micro, intensité du nettoyage, VU-mètres.
-Elle ne parle **jamais** au thread temps-réel — uniquement au bloc de mémoire
-partagée décrit dans [`../apo/src/KwietControl.h`](../apo/src/KwietControl.h),
-qui est le contrat.
+A tray application: stream state, cleaning strength, meters. It **never** speaks
+to the real-time thread — only to the shared-memory block described in
+[`../apo/src/KwietControl.h`](../apo/src/KwietControl.h), which is the contract.
 
 ```powershell
 npm install
-npm run dev      # développement, rechargement du frontend
-npm run build    # installeur NSIS dans src-tauri/target/release/bundle
+npm run dev      # development, frontend reload
+npm run build    # MSI installers in src-tauri/target/release/bundle/msi
 ```
 
-## Ce que fait le backend
+## What the backend does
 
-| Fichier | Rôle |
+| File | Role |
 |---|---|
-| `src-tauri/src/control.rs` | ouvre `Global\KwietControlV1`, convertit les pics en dB, borne l'intensité |
-| `src-tauri/src/settings.rs` | persiste les préférences dans le dossier de config de l'app |
-| `src-tauri/src/main.rs` | icône de barre d'état, fenêtre, commandes, et le fil qui surveille `generation` |
+| `src-tauri/src/control.rs` | Opens `Global\KwietControlV1`, converts peaks to dB, clamps the strength |
+| `src-tauri/src/pack.rs` | Reads whether the effect pack is installed, and whether Windows is actually using it |
+| `src-tauri/src/i18n.rs` | The three strings that live outside the web view: tray menu and tooltip |
+| `src-tauri/src/settings.rs` | Persists preferences in the app's config directory |
+| `src-tauri/src/main.rs` | Tray icon, window anchoring, commands, and the thread watching `generation` |
 
-Deux contraintes dictent la conception :
+Two constraints shape the design:
 
-- **Le bloc n'existe que pendant un flux de capture.** L'APO le crée à
-  `LockForProcess`. L'UI doit donc afficher un état d'attente quand il est
-  absent, et retenter l'ouverture à chaque sondage.
-- **Un nouveau flux repart des valeurs par défaut de l'APO.** Un fil de fond
-  surveille le compteur `generation` et repousse les préférences dès qu'un flux
-  apparaît, même panneau fermé. Tant que l'UI tourne, elle garde aussi la
-  section ouverte, ce qui suffit à préserver les réglages entre deux flux.
+- **The block only exists while a capture stream is open.** The APO creates it at
+  `LockForProcess`, so the panel must render an idle state when it is absent and
+  retry the open on every poll.
+- **A new stream starts from the APO's defaults.** A background thread watches
+  the `generation` counter and re-pushes the user's preferences as soon as a
+  stream appears, even with the panel closed.
 
-L'écriture ne demande **aucune élévation** : c'est l'ACL posée par l'APO qui
-l'autorise (cf. `docs/architecture.md` §6).
+The block is opened per operation rather than held. Holding it looked free and
+cost correctness: a named section lives as long as any handle, so the panel went
+on reporting a stream that had already ended.
 
-## Le parti pris visuel
+Writing needs **no elevation** — the ACL the APO puts on the section allows it
+(see `docs/architecture.md` §6).
 
-Le sujet du produit, c'est l'écart entre deux signaux. Le panneau en fait son
-élément central : un historique défilant où l'enveloppe brute (ambre) et
-l'enveloppe nettoyée (céladon) se superposent. La zone ambre visible au-dessus
-du céladon **est** le bruit retiré. Quand on arrête de parler, le céladon
-s'effondre et l'ambre reste : on voit le produit travailler.
+## Detecting a pack that is installed but not chosen
 
-Typographie d'instrument de mesure : **Bahnschrift** (le DIN variable livré
-avec Windows) pour les libellés, **Consolas** pour tout ce qui est numérique,
-afin que les chiffres restent alignés. Aucune police n'est téléchargée.
+Windows 11 requires the user to pick the effect pack by hand, and a pack that is
+installed but not picked is entirely inert: no error, no log line, nothing
+anywhere says so. The panel names the state outright, from two registry facts
+Windows writes itself plus a COM call for which microphone actually receives the
+applications. It distinguishes: pack missing, installed but not chosen, chosen on
+a microphone that is not the default one, ready, and running.
 
-Fond ardoise bleu-vert, deux couleurs de signal seulement. Pas de troisième
-teinte : ce qui est gardé, ce qui est retiré, rien d'autre.
+## The visual stance
 
-## Limites de cette version
+The subject of this product is the gap between two signals, so the panel makes
+that gap its centrepiece. A scrolling history stacks the raw envelope (amber)
+over the cleaned one (celadon); the amber visible above the celadon **is** the
+noise removed. Stop talking and the celadon collapses while the amber stays —
+you watch the product work. The meter says the same thing about the present
+instant, in one bar.
 
-Périmètre volontairement restreint au **contrôle**. L'installation et la
-désinstallation du pack restent dans [`../installer/effectpack/`](../installer/effectpack/),
-et le panneau ne les propose pas encore. Il ne détecte pas non plus le cas
-« pack installé mais non sélectionné dans les Paramètres Son », qui est
-pourtant le piège le plus courant après une mise à jour.
+Instrument-panel typography: **Bahnschrift** (the variable DIN that ships with
+Windows) for labels, **Consolas** for anything numeric so digits stay in their
+columns. No font is downloaded.
+
+Slate blue-green ground, two signal colours only. No third hue: what is kept,
+what is removed, nothing else.
+
+## Scope
+
+Deliberately limited to **control and diagnosis**. Installing and removing the
+pack belongs to the installer; the panel reports what it finds and points at the
+Windows page that fixes it.
