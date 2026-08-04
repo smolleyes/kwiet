@@ -12,6 +12,11 @@ endif()
 # Never enable in distributed builds.
 option(KWIET_DEV_LOG "Enable Kwiet dev diagnostics logging" OFF)
 
+# Advertises IApoAcousticEchoCancellation. Diagnostics only: it is what gets
+# Chromium's communications pipe to accept the APO, and it is a promise we do
+# not keep -- nothing is cancelled. Never enable in a distributed build.
+option(KWIET_EXPERIMENT_AEC "Advertise acoustic echo cancellation (experiment)" OFF)
+
 add_library(kwiet_apo SHARED
     src/ChannelMix.h
     src/ControlShm.cpp
@@ -37,6 +42,10 @@ target_include_directories(kwiet_apo PRIVATE ../dsp/include)
 
 if(KWIET_DEV_LOG)
     target_compile_definitions(kwiet_apo PRIVATE KWIET_DEV_LOG)
+endif()
+
+if(KWIET_EXPERIMENT_AEC)
+    target_compile_definitions(kwiet_apo PRIVATE KWIET_EXPERIMENT_AEC)
 endif()
 
 set_target_properties(kwiet_apo PROPERTIES

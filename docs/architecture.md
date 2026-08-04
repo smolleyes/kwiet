@@ -1129,6 +1129,22 @@ Windows nous accepte comme annuleur d'écho et câble le flux de référence, pu
 relâche avant qu'un échantillon ne circule, en boucle. Aucun `refFrames` non nul :
 le verrouillage n'aboutit jamais à du traitement.
 
+### Expérience finale, tous leviers actionnés ensemble (2026-08-04)
+
+Magasin de pilotes purgé, un seul paquet, pack déclarant l'AEC, journal remis à
+zéro, et Chrome lancé avec `EnforceSystemEchoCancellation`,
+`WASAPIRawAudioCapture` désactivé et `ExperimentalHardwareEchoCancellation`.
+
+Résultat : **inchangé**. 65 `LockForProcess` réussis, tous relâchés en 3 ms avec
+`refFrames=0`. Le seul verrouillage long du journal — 15,3 secondes — était le
+vumètre des Paramètres Windows pendant la re-sélection du pack, confirmé par le
+propriétaire de la machine, et non Chrome.
+
+Windows nous accepte comme annuleur d'écho, câble le flux de référence, puis
+nous sort avant qu'un échantillon ne circule. La lecture la plus simple, et
+désormais la mieux étayée : **on annonce un annuleur d'écho qui n'annule rien**,
+et le moteur s'en aperçoit.
+
 Hypothèses pour la suite, aucune mesurée :
 
 1. **Le contrat AEC n'est pas honoré.** On déclare l'interface sans annuler quoi

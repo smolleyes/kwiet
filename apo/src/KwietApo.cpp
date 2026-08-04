@@ -137,6 +137,16 @@ HRESULT KwietApo::Inner::QueryInterface(REFIID riid, void** ppvObject)
     } else if (riid == __uuidof(IApoAuxiliaryInputRT)) {
         KWIET_LOG("QI ok: IApoAuxiliaryInputRT");
         *ppvObject = static_cast<IApoAuxiliaryInputRT*>(&o);
+#if defined(KWIET_EXPERIMENT_AEC)
+    } else if (riid == __uuidof(IApoAcousticEchoCancellation)) {
+        // EXPERIMENT ONLY -- never in a shipped build. See docs/architecture.md
+        // §15. Advertising this is what gets Chromium's communications pipe to
+        // accept us at all (111 initialisations, 110 successful locks, 55
+        // AddAuxiliaryInput), but the engine then unlocks within milliseconds
+        // because we advertise an echo canceller and cancel nothing.
+        KWIET_LOG("QI ok: IApoAcousticEchoCancellation [EXPERIMENT]");
+        *ppvObject = static_cast<IApoAcousticEchoCancellation*>(&o);
+#endif
         // IApoAcousticEchoCancellation is deliberately NOT offered, and this is
         // now settled by measurement rather than by argument.
         //
