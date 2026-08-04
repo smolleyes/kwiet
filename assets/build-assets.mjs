@@ -272,6 +272,10 @@ writeFileSync(join(OUT, "mark-micro-tile.svg"), mark({ tile: true, cut: "micro" 
 writeFileSync(join(OUT, "lockup.svg"), lockup());
 // For the installer header strip, where the mark ends up around 40 px tall.
 writeFileSync(join(OUT, "lockup-compact.svg"), lockup({ cut: "micro", markSize: 150, gap: 16 }));
+writeFileSync(
+  join(OUT, "lockup-compact-ink.svg"),
+  lockup({ cut: "micro", markSize: 150, gap: 16, colour: INK.ground, noise: INK.noiseOnLight }),
+);
 writeFileSync(join(OUT, "wordmark.svg"), wordmarkOnly());
 writeFileSync(
   join(OUT, "lockup-ink.svg"),
@@ -370,28 +374,34 @@ console.log("wrote", PNG, "and", ICONS);
 const WIX = join(HERE, "..", "ui", "src-tauri", "wix");
 mkdirSync(WIX, { recursive: true });
 
-const bmp = (width, height, layers, out) =>
+const bmp = (width, height, layers, out, ground = INK.ground) =>
   execFileSync("magick", [
-    "-size", `${width}x${height}`, `xc:${INK.ground}`,
+    "-size", `${width}x${height}`, `xc:${ground}`,
     ...layers,
     `BMP3:${join(WIX, out)}`,
   ]);
 
-// Top banner of every page after the welcome. WiX prints the page title over
-// the left side, so the lockup goes right.
-bmp(493, 58, [
-  "(", "-background", "none", join(OUT, "lockup-compact.svg"), "-resize", "150x40", ")",
-  "-gravity", "east", "-geometry", "+18+0", "-composite",
-], "banner.bmp");
+// Both bitmaps are backgrounds that WiX prints its own text over, in black,
+// with no way to restyle it. A dark image is therefore not a style choice but a
+// bug: the title lands on it and disappears. Hence white where the text goes,
+// and the dark brand confined to the left band the text never reaches.
 
-// Welcome and finish pages. Text runs down the right two thirds, so the mark
-// claims the left band on its own. The word goes under it without its own mark:
-// the lockup here would draw the disc twice in one image.
+// Top banner of every page after the welcome. The page title is printed at the
+// left, so the lockup goes right -- in its ink colours, for a light ground.
+bmp(493, 58, [
+  "(", "-background", "none", join(OUT, "lockup-compact-ink.svg"), "-resize", "150x40", ")",
+  "-gravity", "east", "-geometry", "+18+0", "-composite",
+], "banner.bmp", "white");
+
+// Welcome and finish pages: text runs down the right two thirds.
 bmp(493, 312, [
-  "(", "-background", "none", join(OUT, "mark-full.svg"), "-resize", "138x138", ")",
-  "-gravity", "northwest", "-geometry", "+14+40", "-composite",
+  "-fill", INK.ground, "-draw", "rectangle 0,0 163,311",
+  "(", "-background", "none", join(OUT, "mark-full.svg"), "-resize", "116x116", ")",
+  "-gravity", "northwest", "-geometry", "+24+46", "-composite",
+  // The word goes under the mark without its own: the full lockup here would
+  // draw the disc twice in one image.
   "(", "-background", "none", join(OUT, "wordmark.svg"), "-resize", "104x", ")",
-  "-gravity", "northwest", "-geometry", "+32+196", "-composite",
-], "dialog.bmp");
+  "-gravity", "northwest", "-geometry", "+30+200", "-composite",
+], "dialog.bmp", "white");
 
 console.log("wrote", WIX);
