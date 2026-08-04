@@ -202,14 +202,14 @@ impl Drop for Control {
 pub struct ControlHandle;
 
 impl ControlHandle {
+    /// With no stream the block does not exist, so `present` is false and the
+    /// settings fields are left at zero. The caller fills them from what the
+    /// user actually chose — putting placeholder values here made the panel
+    /// overwrite the user's own click 40 ms after they made it.
     pub fn snapshot(&mut self) -> Snapshot {
         match Control::open() {
             Some(control) => control.snapshot(),
-            None => Snapshot {
-                aggressiveness_db: AGGRESSIVENESS_DEFAULT_DB,
-                enabled: true,
-                ..Snapshot::default()
-            },
+            None => Snapshot::default(),
         }
     }
 

@@ -34,8 +34,20 @@ struct AppState {
 
 #[tauri::command]
 fn snapshot(state: State<'_, AppState>) -> Snapshot {
-    let mut control = state.control.lock().expect("control lock");
-    control.snapshot()
+    let mut snapshot = state.control.lock().expect("control lock").snapshot();
+
+    // Between streams there is no control block to read, and the panel polls
+    // this twenty-five times a second. Answering with anything other than the
+    // user's stored preferences made the toggle spring back and the slider jump
+    // to its default moments after being moved -- the setting was written
+    // correctly, the display contradicted it. And no stream is open at exactly
+    // the moment somebody opens the panel to change something.
+    if !snapshot.present {
+        let settings = state.settings.lock().expect("settings lock").clone();
+        snapshot.enabled = settings.enabled;
+        snapshot.aggressiveness_db = settings.aggressiveness_db;
+    }
+    snapshot
 }
 
 #[tauri::command]
