@@ -67,18 +67,24 @@ jobs:
           cargo clippy --all-targets --locked -- -D warnings
           cargo test --release --locked
 
+      # Before the panel, not after: tauri-build resolves the bundle resources
+      # from build.rs, so *any* cargo command on ui/src-tauri fails outright
+      # while the pack directory is missing -- clippy and tests included.
+      # That strictness is worth keeping: it makes an installer without its
+      # effect pack impossible to build by accident.
+      #
+      # Unsigned here. Windows will refuse to install it, which is fine: what
+      # this proves is that the package assembles and Tauri finds it to embed.
+      - name: Pack d'effets (non signé)
+        run: ./installer/effectpack/build-package.ps1
+        shell: pwsh
+
       - name: Panneau (Rust)
         working-directory: ui/src-tauri
         run: |
           cargo fmt --all --check
           cargo clippy --all-targets --locked -- -D warnings
           cargo test --locked
-
-      # Unsigned: Windows will refuse to install it, which is fine here. What
-      # matters is that the package assembles and Tauri finds it to embed.
-      - name: Pack d'effets (non signé)
-        run: ./installer/effectpack/build-package.ps1
-        shell: pwsh
 
       - name: Installeur
         working-directory: ui
