@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Installation du pack d'effets Kwiet depuis le MSI.
+
+  Le pack est un package pilote : il faut pnputil et une élévation. Le MSI est
+  perMachine, donc les actions différées (Execute="deferred" Impersonate="no")
+  tournent dans le service Windows Installer, élevé.
+
+  Le travail réel est dans pack.ps1, livré à côté du pack pour qu'une
+  installation cassée puisse être réparée à la main. WiX n'orchestre.
+
+  Ancrage : WiX ne lie un Fragment que s'il est référencé. Tauri expose
+  `componentRefs` mais pas de `customActionRefs`, donc le composant ci-dessous
+  sert de point d'accroche — c'est lui qui fait entrer les CustomAction et la
+  séquence dans le paquet. Il n'est pas décoratif pour autant : il enregistre le
+  chemin d'installation, que le dépannage réclame toujours.
+
+  Pas de WixQuietExec : cela demanderait WixUtilExtension, que le modèle de
+  Tauri ne référence pas. Les actions de type 34 (répertoire + ligne de
+  commande) sont du MSI pur.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="KwietEffectPackAnchor"
+                 Guid="7C1E4E2A-3B65-4F1D-9A8E-2D0F5B6C7A91"
+                 Win64="yes">
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Kwiet"
+                       Name="InstallDir"
+                       Type="string"
+                       Value="[INSTALLDIR]"
+                       KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <!--
+      PowerShell 64 bits explicitement : la copie 32 bits ne voit pas
+      pnputil.exe, que WOW64 va chercher dans SysWOW64 où il n'existe pas.
+      pack.ps1 sait retomber sur Sysnative, mais mieux vaut ne pas y arriver.
+    -->
+    <CustomAction Id="KwietInstallPack"
+                  Directory="INSTALLDIR"
+                  ExeCommand='"[System64Folder]WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "[INSTALLDIR]effectpack\pack.ps1" -Action install -PackageDir "[INSTALLDIR]effectpack"'
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+
+    <!--
+      Return="ignore" des deux côtés, délibérément. Un pack qui refuse de
+      s'enregistrer ne doit pas faire échouer l'installation de l'application :
+      le panneau détecte l'absence et le dit, avec un bouton pour agir. Et un
+      pack qui refuse de partir ne doit surtout pas bloquer une désinstallation.
+    -->
+    <CustomAction Id="KwietRemovePack"
+                  Directory="INSTALLDIR"
+                  ExeCommand='"[System64Folder]WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "[INSTALLDIR]effectpack\pack.ps1" -Action uninstall -IgnoreFailure'
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+
+    <InstallExecuteSequence>
+      <!-- Après la copie : pack.ps1 et les INF doivent être sur le disque. -->
+      <Custom Action="KwietInstallPack" After="InstallFiles">NOT REMOVE</Custom>
+
+      <!--
+        Avant la suppression : pack.ps1 doit encore exister pour se retirer.
+
+        NOT UPGRADINGPRODUCTCODE est essentiel. Sur une mise à jour, MSI
+        désinstalle l'ancienne version, et sans ce garde-fou elle retirerait le
+        pack que la nouvelle vient de poser — l'utilisateur se retrouverait avec
+        une application installée et un micro non traité, après une simple mise
+        à jour.
+      -->
+      <Custom Action="KwietRemovePack" Before="RemoveFiles">REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
+    </InstallExecuteSequence>
+  </Fragment>
+</Wix>

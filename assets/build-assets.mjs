@@ -41,7 +41,7 @@ function lcg(seed) {
   };
 }
 
-const round = (n) => Number(n.toFixed(2));
+const round = (n, digits = 2) => Number(n.toFixed(digits));
 const lerp = (a, b, t) => a + (b - a) * t;
 
 /**
@@ -182,33 +182,61 @@ const GLYPHS = {
   t: { advance: 46, d: ["M23 8L23 150", "M0 50L48 50"] },
 };
 
+const STROKE = 22;
+
+/**
+ * `height` is the cap height, i.e. the glyph grid. Round caps push half a
+ * stroke past the grid on every side, so the reported box adds that back --
+ * otherwise every caller that trusts these numbers clips the letters.
+ */
 function wordmark({ height = 150, colour = INK.voice, tracking = 22 } = {}) {
   const k = height / 150;
+  const bleed = (STROKE / 2) * k;
   const parts = [];
   let x = 0;
   for (const ch of "kwiet") {
     const g = GLYPHS[ch];
-    parts.push(`<g transform="translate(${round(x)} 0)">` + g.d.map((d) => `<path d="${d}"/>`).join("") + `</g>`);
+    parts.push(
+      `<g transform="translate(${round(x)} 0)">` +
+        g.d.map((d) => `<path d="${d}"/>`).join("") +
+        `</g>`,
+    );
     x += g.advance + tracking;
   }
-  const width = x - tracking;
+  const gridWidth = x - tracking;
   return {
-    width: width * k,
-    height: height * k,
+    width: gridWidth * k + bleed * 2,
+    height: height + bleed * 2,
     svg:
-      `<g transform="scale(${round(k)})" fill="none" stroke="${colour}" stroke-width="22" ` +
+      `<g transform="translate(${round(bleed)} ${round(bleed)}) scale(${round(k, 4)})" ` +
+      `fill="none" stroke="${colour}" stroke-width="${STROKE}" ` +
       `stroke-linecap="round" stroke-linejoin="round">` +
       parts.join("") +
       `</g>`,
-    raw: { width, height: 150 },
   };
+}
+
+/** The word on its own, for places that already show the mark nearby. */
+function wordmarkOnly({ colour = INK.voice } = {}) {
+  const word = wordmark({ height: 92, colour });
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${round(word.width)} ${round(word.height)}" ` +
+    `width="${round(word.width)}" height="${round(word.height)}" role="img" aria-label="Kwiet">\n` +
+    `  ${word.svg}\n</svg>\n`
+  );
 }
 
 /** Mark and wordmark locked up horizontally, for the README and the installer. */
 // The mark carries a halo of splinters inside its box, so the disc is only
 // about 60% of `markSize`. Matching box heights would leave the disc looking
 // dwarfed by the letters -- hence a mark box well over the wordmark's height.
-function lockup({ markSize = 210, colour = INK.voice, gap = 24, noise = INK.noise } = {}) {
+function lockup({
+  markSize = 210,
+  colour = INK.voice,
+  gap = 24,
+  noise = INK.noise,
+  cut = "full",
+} = {}) {
   const word = wordmark({ height: 92, colour });
   const pad = 16;
   const w = markSize + gap + word.width + pad * 2;
@@ -218,7 +246,7 @@ function lockup({ markSize = 210, colour = INK.voice, gap = 24, noise = INK.nois
   // centring it on the box leaves it looking to have slipped downward.
   const wordY = pad + (h - pad * 2 - word.height) / 2 - word.height * 0.02;
 
-  const inner = mark({ size: markSize, noise })
+  const inner = mark({ size: markSize, noise, cut })
     .replace(/^<svg[^>]*>\n?/, "")
     .replace(/<\/svg>\n?$/, "")
     // Two marks on one page would otherwise collide on the mask id.
@@ -242,6 +270,9 @@ writeFileSync(join(OUT, "mark-bold-tile.svg"), mark({ tile: true, cut: "bold" })
 writeFileSync(join(OUT, "mark-micro.svg"), mark({ cut: "micro" }));
 writeFileSync(join(OUT, "mark-micro-tile.svg"), mark({ tile: true, cut: "micro" }));
 writeFileSync(join(OUT, "lockup.svg"), lockup());
+// For the installer header strip, where the mark ends up around 40 px tall.
+writeFileSync(join(OUT, "lockup-compact.svg"), lockup({ cut: "micro", markSize: 150, gap: 16 }));
+writeFileSync(join(OUT, "wordmark.svg"), wordmarkOnly());
 writeFileSync(
   join(OUT, "lockup-ink.svg"),
   lockup({ colour: INK.ground, noise: INK.noiseOnLight }),
@@ -329,26 +360,38 @@ execFileSync("magick", [
 for (const f of [...product, ...tray]) rmSync(f, { force: true });
 console.log("wrote", PNG, "and", ICONS);
 
-// NSIS is strict: 24-bit BMP at exactly 150x57 for the header strip and
-// 164x314 for the welcome sidebar. Any other size or depth is ignored without
-// a word, which looks exactly like the images never having been configured.
-const NSIS = join(HERE, "..", "ui", "src-tauri", "nsis");
-mkdirSync(NSIS, { recursive: true });
+// The MSI dialogs want 24-bit BMP at exactly these sizes: msiexec draws them at
+// their natural size into a fixed dialog, so anything larger is cropped rather
+// than scaled down. No DPI trick to play here -- unlike NSIS, the Windows
+// Installer UI is not per-monitor aware, so native size is the right size.
+//
+// 493 px of width is generous compared to what NSIS gave us, which is the other
+// reason the artwork can be legible here: the mark has room to be itself.
+const WIX = join(HERE, "..", "ui", "src-tauri", "wix");
+mkdirSync(WIX, { recursive: true });
 
-execFileSync("magick", [
-  "-size", "150x57", `xc:${INK.ground}`,
-  "(", "-background", "none", join(OUT, "lockup.svg"), "-resize", "124x36", ")",
-  "-gravity", "center", "-composite",
-  `BMP3:${join(NSIS, "header.bmp")}`,
-]);
+const bmp = (width, height, layers, out) =>
+  execFileSync("magick", [
+    "-size", `${width}x${height}`, `xc:${INK.ground}`,
+    ...layers,
+    `BMP3:${join(WIX, out)}`,
+  ]);
 
-execFileSync("magick", [
-  "-size", "164x314", `xc:${INK.ground}`,
-  "(", "-background", "none", join(OUT, "mark-full.svg"), "-resize", "124x124", ")",
-  // High rather than centred: the wizard prints its welcome text across the
-  // lower half of this panel.
-  "-gravity", "north", "-geometry", "+0+52", "-composite",
-  `BMP3:${join(NSIS, "sidebar.bmp")}`,
-]);
+// Top banner of every page after the welcome. WiX prints the page title over
+// the left side, so the lockup goes right.
+bmp(493, 58, [
+  "(", "-background", "none", join(OUT, "lockup-compact.svg"), "-resize", "150x40", ")",
+  "-gravity", "east", "-geometry", "+18+0", "-composite",
+], "banner.bmp");
 
-console.log("wrote", NSIS);
+// Welcome and finish pages. Text runs down the right two thirds, so the mark
+// claims the left band on its own. The word goes under it without its own mark:
+// the lockup here would draw the disc twice in one image.
+bmp(493, 312, [
+  "(", "-background", "none", join(OUT, "mark-full.svg"), "-resize", "138x138", ")",
+  "-gravity", "northwest", "-geometry", "+14+40", "-composite",
+  "(", "-background", "none", join(OUT, "wordmark.svg"), "-resize", "104x", ")",
+  "-gravity", "northwest", "-geometry", "+32+196", "-composite",
+], "dialog.bmp");
+
+console.log("wrote", WIX);

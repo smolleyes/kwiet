@@ -71,7 +71,8 @@ Windows 11 build 26200, USB microphone, 48 kHz stereo:
 > Audio enhancements → Kwiet**. Until you do, Kwiet is installed and entirely
 > inert. The panel will tell you so, with a button to open the right page.
 
-1. Download `Kwiet_x.y.z_x64-setup.exe` from
+1. Download the MSI for your language — `Kwiet_x.y.z_x64_en-US.msi` or
+   `Kwiet_x.y.z_x64_fr-FR.msi` — from
    [releases](https://github.com/smolleyes/kwiet/releases).
 2. Run it. It asks for elevation: the effect pack is a driver package and
    registers with Windows through `pnputil`. Sound cuts out briefly.
@@ -129,8 +130,14 @@ cd dsp ; cargo build --release ; cd ..
 
 # 4. The app and the installer
 cd ui ; npm ci ; npm run tauri build
-# -> ui/src-tauri/target/release/bundle/nsis/Kwiet_0.2.1_x64-setup.exe
+# -> ui/src-tauri/target/release/bundle/msi/Kwiet_0.2.1_x64_en-US.msi
+#    ui/src-tauri/target/release/bundle/msi/Kwiet_0.2.1_x64_fr-FR.msi
 ```
+
+The format is **MSI**, not NSIS: NSIS stubs draw antivirus false positives far
+more often than a Windows Installer package does. The effect pack is placed by a
+deferred custom action, defined in
+[`ui/src-tauri/wix/effectpack.wxs`](ui/src-tauri/wix/effectpack.wxs).
 
 > [!CAUTION]
 > **Do not install an in-development APO on your working machine.** An APO that

@@ -75,7 +75,8 @@ Sur Windows 11 build 26200, micro USB, 48 kHz stéréo :
 > Tant que ce n'est pas fait, Kwiet est installé et complètement inerte. Le
 > panneau vous le dira, avec un bouton pour ouvrir la bonne page.
 
-1. Téléchargez `Kwiet_x.y.z_x64-setup.exe` depuis les
+1. Téléchargez le MSI correspondant à votre langue —
+   `Kwiet_x.y.z_x64_fr-FR.msi` ou `Kwiet_x.y.z_x64_en-US.msi` — depuis les
    [releases](https://github.com/smolleyes/kwiet/releases).
 2. Lancez-le. Il demande l'élévation : le pack d'effets est un package pilote,
    il s'enregistre auprès de Windows via `pnputil`. Le son est brièvement coupé.
@@ -136,8 +137,14 @@ cd dsp ; cargo build --release ; cd ..
 
 # 4. L'application et l'installeur
 cd ui ; npm ci ; npm run tauri build
-# -> ui/src-tauri/target/release/bundle/nsis/Kwiet_0.2.1_x64-setup.exe
+# -> ui/src-tauri/target/release/bundle/msi/Kwiet_0.2.1_x64_fr-FR.msi
+#    ui/src-tauri/target/release/bundle/msi/Kwiet_0.2.1_x64_en-US.msi
 ```
+
+Le format est **MSI** et non NSIS : les stubs NSIS déclenchent régulièrement des
+faux positifs antivirus, un paquet Windows Installer beaucoup moins. Le pack
+d'effets est posé par une CustomAction différée, définie dans
+[`ui/src-tauri/wix/effectpack.wxs`](ui/src-tauri/wix/effectpack.wxs).
 
 > [!CAUTION]
 > **N'installez pas un APO en cours de développement sur votre poste de

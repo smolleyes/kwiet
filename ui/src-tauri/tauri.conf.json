@@ -28,7 +28,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": ["msi"],
     "publisher": "Kwiet contributors",
     "copyright": "Apache-2.0",
     "category": "Utility",
@@ -45,14 +45,12 @@
       "../../installer/effectpack/package/": "effectpack/"
     },
     "windows": {
-      "nsis": {
-        "installerHooks": "nsis/hooks.nsh",
-        "languages": ["French", "English"],
-        "displayLanguageSelector": true,
-        "installMode": "perMachine",
-        "installerIcon": "icons/icon.ico",
-        "headerImage": "nsis/header.bmp",
-        "sidebarImage": "nsis/sidebar.bmp"
+      "wix": {
+        "language": ["fr-FR", "en-US"],
+        "fragmentPaths": ["wix/effectpack.wxs"],
+        "componentRefs": ["KwietEffectPackAnchor"],
+        "bannerPath": "wix/banner.bmp",
+        "dialogImagePath": "wix/dialog.bmp"
       }
     }
   }

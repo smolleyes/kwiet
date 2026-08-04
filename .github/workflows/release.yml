@@ -117,8 +117,8 @@ jobs:
       - name: Empreintes
         shell: pwsh
         run: |
-          $dir = 'ui/src-tauri/target/release/bundle/nsis'
-          Get-ChildItem "$dir/*-setup.exe" | ForEach-Object {
+          $dir = 'ui/src-tauri/target/release/bundle/msi'
+          Get-ChildItem "$dir/*.msi" | ForEach-Object {
             $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
             "$hash  $($_.Name)"
           } | Set-Content "$dir/SHA256SUMS.txt" -Encoding ascii
@@ -130,12 +130,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $version = '${{ steps.version.outputs.version }}'
-          $dir = 'ui/src-tauri/target/release/bundle/nsis'
+          $dir = 'ui/src-tauri/target/release/bundle/msi'
           $signed = '${{ steps.cert.outputs.path }}' -ne ''
           $notes = @"
           ## Installation
 
-          1. Téléchargez et lancez ``Kwiet_${version}_x64-setup.exe``.
+          1. Téléchargez le MSI correspondant à votre langue —
+             ``Kwiet_${version}_x64_fr-FR.msi`` ou ``Kwiet_${version}_x64_en-US.msi``
+             — et lancez-le.
           2. **Choisissez Kwiet** dans Paramètres → Son → votre micro →
              Améliorations audio. Sans cette étape, Kwiet est installé et inerte :
              le panneau vous le dira.
@@ -151,9 +153,9 @@ jobs:
           "@
           }
           $draft = if ($signed) { @() } else { @('--draft') }
-          gh release create "v$version" `
-            "$dir/Kwiet_${version}_x64-setup.exe" `
-            "$dir/SHA256SUMS.txt" `
+          $assets = @(Get-ChildItem "$dir/*.msi" | ForEach-Object { $_.FullName })
+          $assets += (Resolve-Path "$dir/SHA256SUMS.txt").Path
+          gh release create "v$version" @assets `
             --title "Kwiet $version" `
             --notes $notes `
             @draft

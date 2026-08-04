@@ -14,6 +14,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A cold build compiles tract from source and takes a quarter of an hour. There
+# is no point spending that on a commit that a newer push has already replaced.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -82,7 +88,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: kwiet-setup-unsigned
-          path: ui/src-tauri/target/release/bundle/nsis/*-setup.exe
+          name: kwiet-msi-unsigned
+          path: ui/src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
           retention-days: 14
