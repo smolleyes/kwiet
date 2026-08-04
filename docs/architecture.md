@@ -1302,17 +1302,39 @@ connu ; dans la table QI du binaire, l'inconnue siège entre
 
 **Ce que le nom implique.** *Internal* : interface interne Microsoft, absente du
 SDK, du registre et du web parce qu'elle n'est pas destinée aux tiers. On n'en
-connaît ni les méthodes, ni le contrat, ni la sémantique. Windows la réclame à
-chaque instanciation — 393 fois sur une seule session de test — et **aucun APO
-tiers ne peut la fournir**.
+connaît ni les méthodes, ni le contrat, ni la sémantique, et Windows la réclame
+à chaque instanciation — 393 fois sur une seule session de test.
 
-Si le pipe communications en dépend, cela explique l'ensemble des observations
-de la journée, et pas seulement pour Kwiet : ni le format, ni la latence, ni une
-annulation d'écho réelle n'y changeront quoi que ce soit. Les APO de Microsoft
-la implémentent, les autres non.
+⚠️ **Portée à ne pas surestimer.** Il serait tentant d'en conclure qu'aucun APO
+tiers n'est admis. **Firefox contredit cela** : son `getUserMedia` fait
+verrouiller et traiter cet APO sans difficulté. Windows n'exclut donc pas les
+APO tiers, et cette interface n'est pas un péage général.
 
-C'est une hypothèse, pas une conclusion — mais c'est la première qui explique
-pourquoi tout le reste a échoué.
+Ce que les mesures disent, précisément :
+
+| Mode du pipe | Consommateur | Résultat |
+|---|---|---|
+| DEFAULT | Firefox, ffmpeg, Enregistreur vocal | verrouillé, traite |
+| COMMUNICATIONS | Chrome | verrouillé puis lâché en 3 ms |
+
+Et c'est **Chrome qui choisit ce pipe** : son code pose
+`eCategory = AudioCategory_Communications` et le conserve même quand
+`EnforceSystemEchoCancellation` désactive le mode RAW. Firefox ne le fait pas.
+
+L'hypothèse tenable est donc plus étroite : `IAudioProcessingObjectInternal`
+serait requise **dans le pipe communications**, pas pour un APO tiers en
+général. Elle reste une hypothèse.
+
+### L'expérience qui trancherait
+
+Sélectionner **Voice Clarity** au lieu de Kwiet, lancer Chrome avec le flag, et
+mesurer si la suppression de bruit s'applique. Voice Clarity est un pack
+d'effets Microsoft : il implémente vraisemblablement l'interface interne.
+
+- Si Voice Clarity fonctionne dans Chrome et pas nous → le pipe communications
+  réserve l'accès aux APO Microsoft, et c'est un mur.
+- Si Voice Clarity échoue aussi → le pipe communications n'accepte aucun pack
+  d'effets, l'interface interne n'y est pour rien, et le problème est ailleurs.
 
 ## 8. Questions ouvertes
 
