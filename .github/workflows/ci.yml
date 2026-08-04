@@ -7,9 +7,11 @@
 
 name: CI
 
+# Not on push to main. A cold build takes twenty minutes, and running one on
+# every documentation commit -- alongside the release build a tag kicks off in
+# parallel -- was noise, not safety. Tags are the only automatic trigger now;
+# the release workflow replays the whole chain, tests included.
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 
