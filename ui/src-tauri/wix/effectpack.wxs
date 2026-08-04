@@ -38,10 +38,15 @@
       PowerShell 64 bits explicitement : la copie 32 bits ne voit pas
       pnputil.exe, que WOW64 va chercher dans SysWOW64 où il n'existe pas.
       pack.ps1 sait retomber sur Sysnative, mais mieux vaut ne pas y arriver.
+
+      -WindowStyle Hidden : une installation ne doit pas faire clignoter de
+      console. L'action différée tourne dans le service Windows Installer, donc
+      la fenêtre n'atteint normalement pas le bureau, mais rien ne le garantit
+      selon le mode d'invocation — autant ne pas en dépendre.
     -->
     <CustomAction Id="KwietInstallPack"
                   Directory="INSTALLDIR"
-                  ExeCommand='"[System64Folder]WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "[INSTALLDIR]effectpack\pack.ps1" -Action install -PackageDir "[INSTALLDIR]effectpack"'
+                  ExeCommand='"[System64Folder]WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "[INSTALLDIR]effectpack\pack.ps1" -Action install -PackageDir "[INSTALLDIR]effectpack"'
                   Execute="deferred"
                   Impersonate="no"
                   Return="ignore" />
@@ -54,7 +59,7 @@
     -->
     <CustomAction Id="KwietRemovePack"
                   Directory="INSTALLDIR"
-                  ExeCommand='"[System64Folder]WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "[INSTALLDIR]effectpack\pack.ps1" -Action uninstall -IgnoreFailure'
+                  ExeCommand='"[System64Folder]WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "[INSTALLDIR]effectpack\pack.ps1" -Action uninstall -IgnoreFailure'
                   Execute="deferred"
                   Impersonate="no"
                   Return="ignore" />
