@@ -88,9 +88,16 @@ jobs:
           $json = Get-Content $conf -Raw
           $json = $json -replace '"version": "[^"]*"', ('"version": "{0}"' -f $version)
           Set-Content $conf $json -Encoding utf8 -NoNewline
+          # Uniquement dans [package]. Cargo.toml porte d'autres lignes
+          # `version = "..."` en début de ligne -- celle de [dependencies.windows]
+          # notamment -- et un remplacement global y écrivait la version de
+          # Kwiet, après quoi la compilation échouait sur « failed to select a
+          # version for windows ».
           $cargo = 'ui/src-tauri/Cargo.toml'
-          (Get-Content $cargo) -replace '^version = ".*"$', ('version = "{0}"' -f $version) |
-            Set-Content $cargo -Encoding utf8
+          $text = Get-Content $cargo -Raw
+          $re = [regex]::new('(?ms)(^\[package\].*?^version\s*=\s*)"[^"]*"')
+          $text = $re.Replace($text, ('${1}"' + $version + '"'), 1)
+          Set-Content $cargo $text -Encoding utf8 -NoNewline
 
       - name: Certificat de signature
         id: cert
