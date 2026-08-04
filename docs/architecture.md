@@ -967,6 +967,39 @@ d'icônes — produit (tuile sombre) et tray (transparent, il se pose sur une ba
 des tâches claire ou sombre). Le logotype est de la géométrie, sans dépendance à
 une police installée : GitHub rastérise les SVG sous Linux.
 
+## 13. ✅ Chaîne de distribution validée (2026-08-04)
+
+Premier test réel de bout en bout : release publique GitHub → téléchargement →
+installation sur une machine **purgée de tout certificat Kwiet**.
+
+Deux échecs préalables, tous deux nommés par Windows, qui identifient la cause
+sans ambiguïté :
+
+| Code | Signification | Cas mesuré |
+|---|---|---|
+| `0xE000026F` | pas de catalogue | release non signée : `build-package.ps1` sans certificat s'arrête avant `makecat` |
+| `0x800B0109` | `CERT_E_UNTRUSTEDROOT` | paquet signé, certificat absent des magasins de la machine |
+
+Ce que fait désormais l'installeur, dans cet ordre :
+
+```
+Certificat de signature approuve (CN=Kwiet Project, …, D6B261AA…)
+pnputil /add-driver kwiet_component.inf /install
+pnputil /add-driver kwiet_extension.inf /install
+Pack installe. Packages publies : oem176.inf, oem83.inf
+```
+
+Le certificat **public** voyage dans le pack et est extrait du PFX au moment de
+signer, donc il ne peut pas désigner une autre clé que celle qui a signé. La clé
+privée ne quitte jamais la construction : elle vit dans un secret du dépôt. Le
+certificat porte l'EKU *Code Signing* seul — il ne peut valider aucune chaîne
+TLS. La désinstallation le retire des magasins.
+
+Ce que ça ne règle pas : c'est toujours un octroi de confiance réel sur la
+machine de l'utilisateur. Un certificat de signature de code commercial chaîne
+vers une racine déjà présente partout et ne demande d'ajouter rien du tout ;
+c'est la seule voie qui évite complètement ce compromis.
+
 ## 8. Questions ouvertes
 
 - **`APOInitSystemEffects3`** (Win11 22H2+) : layout différent de SE2 — le
