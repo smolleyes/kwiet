@@ -1356,13 +1356,36 @@ Sur Firefox, à l'écoute, réglages Kwiet à 50 / 60 / 80 dB :
 À prendre au sérieux : notre concurrent direct est gratuit, préinstallé, et
 meilleur à notre réglage par défaut.
 
-Explication plausible : un sifflement est **harmonique et dans la bande
-vocale**. DeepFilterNet3 est entraîné à séparer parole et bruit, et un sifflet
-ressemble spectralement à de la parole — c'est précisément le signal qu'il
-préserve. Voice Clarity emploie vraisemblablement une approche différente.
+Première explication avancée, et **fausse** : « DeepFilterNet3 préserve un
+sifflement parce qu'il est harmonique et dans la bande vocale ». Mesure faite,
+le réseau l'identifie parfaitement comme du bruit.
 
-À faire : une comparaison chiffrée sur source contrôlée plutôt qu'à l'oreille,
-et une revue du réglage par défaut (50 dB) qui est peut-être trop prudent.
+Ce que la mesure montre — l'intensité est un **plafond dur**, pas une indication :
+
+| Limite réglée | Sifflement atténué de |
+|---|---|
+| 20 dB | 20,5 dB |
+| 50 dB | 50,5 dB |
+| 80 dB | 80,5 dB |
+| 100 dB | 220,5 dB (silence numérique) |
+
+L'atténuation suit la limite au dixième près. Le résidu audible à 50 dB n'est
+donc pas une faiblesse du réseau : c'est le réglage qui fait exactement ce qu'on
+lui demande, et Voice Clarity ne s'impose pas ce plafond.
+
+### Pourquoi le défaut reste à 50 dB
+
+La conclusion évidente était de monter à 75. **Essayé en usage réel : à 75 dB la
+voix est détruite.**
+
+La leçon porte sur la mesure, pas sur le chiffre. Un balayage sur une sinusoïde
+pure, sans parole, ne dit rien de ce qu'un plafond fait à la parole — le
+plafond s'applique à ce que le réseau décide de supprimer, et près d'une voix il
+décide autrement. Relever ce défaut demande des essais d'écoute sur de la
+parole, pas un balayage sur un sinus.
+
+Le test `measure_whistle_across_the_aggressiveness_range` reste dans la suite,
+avec ce que sa lecture naïve a coûté.
 
 ## 8. Questions ouvertes
 

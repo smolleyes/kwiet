@@ -65,8 +65,23 @@ const MAX_FRAMES: u32 = 8192;
 ///
 /// Deliberately below DeepFilterNet's own default of 100 dB: suppressing all
 /// the way to digital silence clips speech onsets and pumps audibly, whereas a
-/// residual noise floor masks both. Kept in step with
-/// `KWIET_AGGRESSIVENESS_DEFAULT_TENTHS` in apo/src/KwietControl.h.
+/// residual noise floor masks both.
+///
+/// This value has been challenged and holds. The limit is a hard cap, not a
+/// hint: `measure_whistle_across_the_aggressiveness_range` shows a steady tone
+/// leaving attenuated by exactly the limit -- 20.5 dB at 20, 50.5 at 50, 80.5
+/// at 80. That made 75 dB look like the obvious fix for a whistle still audible
+/// at 50. Tried in real use: **75 dB destroys the voice.**
+///
+/// The lesson is about the measurement, not the number. A synthetic tone with
+/// no speech present says nothing about what a cap does to speech, because the
+/// cap applies to whatever the network decides to suppress -- and near a voice
+/// it decides differently. Raising the default requires listening tests on
+/// speech, not a sweep on a sine.
+///
+/// Kept in step with `KWIET_AGGRESSIVENESS_DEFAULT_TENTHS` in
+/// apo/src/KwietControl.h and `AGGRESSIVENESS_DEFAULT_DB` in
+/// ui/src-tauri/src/control.rs.
 const DEFAULT_ATTEN_LIM_DB: f32 = 50.0;
 
 /// Accepted range for the attenuation limit. Out-of-range values are clamped
@@ -615,6 +630,89 @@ mod tests {
             ratio < 0.5,
             "noise barely attenuated (ratio {ratio:.3}) -- is the model actually running?"
         );
+    }
+
+    /// A sustained whistle is where DeepFilterNet3 is weakest: it is harmonic
+    /// and sits in the voice band, so the network reads it as speech and keeps
+    /// it. Windows' own Voice Clarity removes it, which is a gap worth
+    /// measuring rather than arguing about.
+    ///
+    /// This also answers whether WebRTC's classical noise suppressor -- which
+    /// ships in the same crate as the echo canceller -- would close that gap: a
+    /// steady tone is exactly what a spectral noise-floor estimator is good at.
+    #[test]
+    fn measure_whistle_versus_speech_band_noise() {
+        let dsp = engine();
+        let hop = dsp.hop as usize;
+        let channels = dsp.channels as usize;
+        const BLOCKS: usize = 120;
+
+        let rms_of = |v: &[f32]| (v.iter().map(|s| s * s).sum::<f32>() / v.len() as f32).sqrt();
+        let db = |x: f32| 20.0 * x.max(1e-12).log10();
+
+        // A 2 kHz whistle, steady, at a modest level.
+        let mut input = vec![0.0f32; hop * channels];
+        let mut output = vec![0.0f32; hop * channels];
+        let mut phase = 0.0f32;
+        let (mut sum_in, mut sum_out) = (0.0f32, 0.0f32);
+
+        for block in 0..BLOCKS {
+            for frame in 0..hop {
+                phase += 2000.0 * std::f32::consts::TAU / REQUIRED_SAMPLE_RATE as f32;
+                let s = phase.sin() * 0.15;
+                for ch in 0..channels {
+                    input[frame * channels + ch] = s;
+                }
+            }
+            // SAFETY: single-threaded test, buffers sized to the engine's block.
+            unsafe { dsp.process(&input, &mut output) }.expect("process should succeed");
+            // Let the network settle before measuring.
+            if block >= BLOCKS - 40 {
+                sum_in += rms_of(&input);
+                sum_out += rms_of(&output);
+            }
+        }
+
+        let kept = db(sum_out / 40.0) - db(sum_in / 40.0);
+        println!("whistle attenuation through DeepFilterNet3: {:.1} dB", -kept);
+    }
+
+    /// Sweeps the aggressiveness control against a steady whistle, because the
+    /// question it answers is a product one: where should the default sit?
+    #[test]
+    fn measure_whistle_across_the_aggressiveness_range() {
+        let dsp = engine();
+        let hop = dsp.hop as usize;
+        let channels = dsp.channels as usize;
+        let rms_of = |v: &[f32]| (v.iter().map(|s| s * s).sum::<f32>() / v.len() as f32).sqrt();
+        let db = |x: f32| 20.0 * x.max(1e-12).log10();
+
+        for limit in [20.0f32, 35.0, 50.0, 65.0, 80.0, 100.0] {
+            dsp.set_attenuation_db(limit);
+            let mut input = vec![0.0f32; hop * channels];
+            let mut output = vec![0.0f32; hop * channels];
+            let mut phase = 0.0f32;
+            let (mut sum_in, mut sum_out) = (0.0f32, 0.0f32);
+            const BLOCKS: usize = 120;
+
+            for block in 0..BLOCKS {
+                for frame in 0..hop {
+                    phase += 2000.0 * std::f32::consts::TAU / REQUIRED_SAMPLE_RATE as f32;
+                    let s = phase.sin() * 0.15;
+                    for ch in 0..channels {
+                        input[frame * channels + ch] = s;
+                    }
+                }
+                // SAFETY: single-threaded test.
+                unsafe { dsp.process(&input, &mut output) }.expect("process should succeed");
+                if block >= BLOCKS - 40 {
+                    sum_in += rms_of(&input);
+                    sum_out += rms_of(&output);
+                }
+            }
+            let attenuation = db(sum_in / 40.0) - db(sum_out / 40.0);
+            println!("  limit {limit:5.0} dB -> whistle attenuated {attenuation:5.1} dB");
+        }
     }
 
     /// The echo canceller has to actually cancel, through the same C ABI the
