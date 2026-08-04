@@ -67,7 +67,12 @@ fn open_microphone_settings() {
 /// language instead of flashing one and settling on the other.
 #[tauri::command]
 fn language(state: State<'_, AppState>) -> String {
-    let preference = state.settings.lock().expect("settings lock").language.clone();
+    let preference = state
+        .settings
+        .lock()
+        .expect("settings lock")
+        .language
+        .clone();
     i18n::resolve(preference.as_deref())
 }
 
@@ -137,7 +142,7 @@ fn main() {
         .setup(|app| {
             let settings = Settings::load(app.handle());
             app.manage(AppState {
-                control: Mutex::new(ControlHandle::default()),
+                control: Mutex::new(ControlHandle),
                 settings: Mutex::new(settings),
                 pack: Mutex::new(PackStatus::default()),
             });
@@ -184,7 +189,12 @@ fn main() {
 
             let language = {
                 let state: State<'_, AppState> = app.state();
-                let preference = state.settings.lock().expect("settings lock").language.clone();
+                let preference = state
+                    .settings
+                    .lock()
+                    .expect("settings lock")
+                    .language
+                    .clone();
                 i18n::resolve(preference.as_deref())
             };
             let menu = build_tray_menu(app.handle(), &language)?;

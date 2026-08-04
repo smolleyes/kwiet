@@ -32,7 +32,10 @@ fn main() {
         hound::SampleFormat::Float => reader.samples::<f32>().map(|s| s.unwrap()).collect(),
         hound::SampleFormat::Int => {
             let scale = 1.0 / (1i64 << (spec.bits_per_sample - 1)) as f32;
-            reader.samples::<i32>().map(|s| s.unwrap() as f32 * scale).collect()
+            reader
+                .samples::<i32>()
+                .map(|s| s.unwrap() as f32 * scale)
+                .collect()
         }
     };
 

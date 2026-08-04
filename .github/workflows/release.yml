@@ -1,0 +1,159 @@
+# Publie une release à partir d'un tag `vX.Y.Z`.
+#
+# Le tag est la source de vérité pour la version : elle est réécrite dans
+# tauri.conf.json et passée au pack d'effets, de sorte qu'un installeur ne peut
+# pas annoncer une version différente de celle qu'il pose dans le magasin de
+# pilotes.
+#
+# Signature : si les secrets sont présents, la DLL et le catalogue sont signés.
+# Sinon la release est publiée en brouillon et marquée non signée -- Windows
+# refusera d'installer un package pilote non signé, et il vaut mieux le dire
+# que livrer un installeur qui échoue chez l'utilisateur.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version x.y.z (sans le v)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version depuis le tag
+        id: version
+        shell: pwsh
+        run: |
+          $version = if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            '${{ inputs.version }}'
+          } else {
+            '${{ github.ref_name }}' -replace '^v', ''
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Version attendue sous la forme x.y.z, reçu : $version"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "Version : $version"
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            dsp -> target
+            ui/src-tauri -> target
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: APO (C++)
+        run: |
+          cmake -S apo -B apo/build -A x64
+          cmake --build apo/build --config Release
+
+      - name: DSP (Rust)
+        working-directory: dsp
+        run: |
+          cargo test --release --locked
+          cargo build --release
+
+      - name: Aligner la version sur le tag
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $conf = 'ui/src-tauri/tauri.conf.json'
+          $json = Get-Content $conf -Raw
+          $json = $json -replace '"version": "[^"]*"', ('"version": "{0}"' -f $version)
+          Set-Content $conf $json -Encoding utf8 -NoNewline
+          $cargo = 'ui/src-tauri/Cargo.toml'
+          (Get-Content $cargo) -replace '^version = ".*"$', ('version = "{0}"' -f $version) |
+            Set-Content $cargo -Encoding utf8
+
+      - name: Certificat de signature
+        id: cert
+        if: env.SIGNING_PFX != ''
+        shell: pwsh
+        env:
+          SIGNING_PFX: ${{ secrets.SIGNING_PFX }}
+        run: |
+          $bytes = [Convert]::FromBase64String($env:SIGNING_PFX)
+          $path = Join-Path $env:RUNNER_TEMP 'kwiet-signing.pfx'
+          [IO.File]::WriteAllBytes($path, $bytes)
+          "path=$path" >> $env:GITHUB_OUTPUT
+
+      - name: Pack d'effets
+        shell: pwsh
+        env:
+          PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
+        run: |
+          $args = @('-Version', '${{ steps.version.outputs.version }}')
+          if ('${{ steps.cert.outputs.path }}') {
+            $args += @('-CertPath', '${{ steps.cert.outputs.path }}',
+                       '-CertPassword', $env:PFX_PASSWORD)
+          }
+          ./installer/effectpack/build-package.ps1 @args
+
+      - name: Installeur
+        working-directory: ui
+        run: |
+          npm ci
+          npm run tauri build
+
+      - name: Empreintes
+        shell: pwsh
+        run: |
+          $dir = 'ui/src-tauri/target/release/bundle/nsis'
+          Get-ChildItem "$dir/*-setup.exe" | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+            "$hash  $($_.Name)"
+          } | Set-Content "$dir/SHA256SUMS.txt" -Encoding ascii
+          Get-Content "$dir/SHA256SUMS.txt"
+
+      - name: Publier la release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $dir = 'ui/src-tauri/target/release/bundle/nsis'
+          $signed = '${{ steps.cert.outputs.path }}' -ne ''
+          $notes = @"
+          ## Installation
+
+          1. Téléchargez et lancez ``Kwiet_${version}_x64-setup.exe``.
+          2. **Choisissez Kwiet** dans Paramètres → Son → votre micro →
+             Améliorations audio. Sans cette étape, Kwiet est installé et inerte :
+             le panneau vous le dira.
+
+          Windows 11 24H2 ou plus récent, x64, micro à 48 kHz.
+          "@
+          if (-not $signed) {
+            $notes += @"
+
+          > [!WARNING]
+          > **Build non signé.** Windows refusera d'enregistrer le pack d'effets.
+          > Cette release est un artefact de test, pas une version installable.
+          "@
+          }
+          $draft = if ($signed) { @() } else { @('--draft') }
+          gh release create "v$version" `
+            "$dir/Kwiet_${version}_x64-setup.exe" `
+            "$dir/SHA256SUMS.txt" `
+            --title "Kwiet $version" `
+            --notes $notes `
+            @draft

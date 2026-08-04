@@ -133,7 +133,8 @@ pub fn status() -> PackStatus {
         .and_then(endpoint_key_name)
         .map(str::to_ascii_lowercase);
 
-    let Ok(capture) = RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey_with_flags(CAPTURE_KEY, KEY_READ)
+    let Ok(capture) =
+        RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey_with_flags(CAPTURE_KEY, KEY_READ)
     else {
         return status;
     };

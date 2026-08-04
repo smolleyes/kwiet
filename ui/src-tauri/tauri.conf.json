@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Kwiet",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "identifier": "app.kwiet.tray",
   "build": {
     "frontendDist": "../src"
@@ -13,7 +13,7 @@
         "label": "panel",
         "title": "Kwiet",
         "width": 380,
-        "height": 580,
+        "height": 620,
         "resizable": false,
         "decorations": false,
         "transparent": false,
@@ -23,16 +23,37 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:"
     }
   },
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "publisher": "Kwiet contributors",
+    "copyright": "Apache-2.0",
+    "category": "Utility",
+    "shortDescription": "Suppression de bruit micro pour toutes vos applications",
+    "longDescription": "Kwiet nettoie votre microphone par IA pour toutes les applications, sans micro virtuel ni changement de périphérique.",
+    "licenseFile": "../../LICENSE",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
+      "icons/128x128@2x.png",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "../../installer/effectpack/package/": "effectpack/"
+    },
+    "windows": {
+      "nsis": {
+        "installerHooks": "nsis/hooks.nsh",
+        "languages": ["French", "English"],
+        "displayLanguageSelector": true,
+        "installMode": "perMachine",
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "nsis/header.bmp",
+        "sidebarImage": "nsis/sidebar.bmp"
+      }
+    }
   }
 }

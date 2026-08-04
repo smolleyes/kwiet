@@ -44,8 +44,11 @@
           <div class="meter-fill" id="meterFill"></div>
           <div class="meter-peak" id="meterPeak"></div>
         </div>
+        <!-- Evenly spaced, because the labels are laid out evenly. Marking −6
+             here would put it at three quarters of the bar when the meter puts
+             it at nine tenths. -->
         <div class="meter-scale" aria-hidden="true">
-          <span>−60</span><span>−40</span><span>−20</span><span>−6</span><span>0</span>
+          <span>−60</span><span>−45</span><span>−30</span><span>−15</span><span>0</span>
         </div>
         <p class="meter-removed" id="meterRemoved"></p>
       </section>

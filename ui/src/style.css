@@ -339,16 +339,16 @@ section {
   color: var(--ink-faint);
 }
 
+/* The line comes and goes with the signal, so its height is reserved for good.
+   Collapsing it would shove everything below up and down as you speak. */
 .meter-removed {
   margin: 9px 0 0;
+  min-height: 1.25em;
+  line-height: 1.25;
   font-family: var(--font-num);
   font-size: 11.5px;
   font-variant-numeric: tabular-nums;
   color: var(--removed);
-}
-
-.meter-removed:empty {
-  display: none;
 }
 
 /* ---------- slider ---------- */
@@ -487,9 +487,18 @@ input[type="range"]:hover::-webkit-slider-thumb {
 
 /* ---------- footer ---------- */
 
-.status {
+.foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
   padding: 9px 16px 11px;
   border-top: 1px solid var(--rule);
+}
+
+.status {
+  /* Lets the flex item shrink so the ellipsis can do its job. */
+  min-width: 0;
   font-family: var(--font-num);
   font-size: 10.5px;
   letter-spacing: 0.02em;
@@ -501,6 +510,46 @@ input[type="range"]:hover::-webkit-slider-thumb {
 
 .status.fault {
   color: var(--removed);
+}
+
+/* Set once and forgotten, so it gets no chrome: two words and a hairline. A
+   pair of buttons here would carry more weight than the choice deserves. */
+.lang {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.lang button {
+  padding: 0;
+  font-family: var(--font-label);
+  font-variation-settings: "wght" 500, "wdth" 87;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--ink-faint);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  transition: color 150ms ease;
+}
+
+.lang button + button {
+  padding-left: 7px;
+  border-left: 1px solid var(--rule-strong);
+}
+
+.lang button:hover {
+  color: var(--ink-soft);
+}
+
+.lang button[aria-pressed="true"] {
+  color: var(--kept);
+}
+
+.lang button:focus-visible {
+  outline: 1px solid var(--kept);
+  outline-offset: 3px;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -109,7 +109,9 @@ impl Control {
         };
         if view.Value.is_null() {
             // SAFETY: `handle` came from OpenFileMappingW and is closed once.
-            unsafe { let _ = CloseHandle(handle); };
+            unsafe {
+                let _ = CloseHandle(handle);
+            };
             return None;
         }
 
@@ -197,7 +199,6 @@ impl Drop for Control {
 /// ride along are re-pushed by the watcher thread as soon as it sees a new
 /// generation, so nothing is lost but a few hundred milliseconds at the APO's
 /// defaults when a stream starts.
-#[derive(Default)]
 pub struct ControlHandle;
 
 impl ControlHandle {

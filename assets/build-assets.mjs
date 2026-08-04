@@ -247,6 +247,8 @@ writeFileSync(
   lockup({ colour: INK.ground, noise: INK.noiseOnLight }),
 );
 writeFileSync(join(OUT, "mark-full-ink.svg"), mark({ noise: INK.noiseOnLight }));
+// The panel's header shows the mark at 18 px, where the splinters are mud.
+writeFileSync(join(HERE, "..", "ui", "src", "mark.svg"), mark({ cut: "micro" }));
 console.log("wrote", OUT);
 
 // ---------------------------------------------------------------------------
@@ -314,9 +316,6 @@ render("mark-full-tile.svg", join(ICONS, "128x128.png"), 128);
 render("mark-full-tile.svg", join(ICONS, "128x128@2x.png"), 256);
 render("mark-full-tile.svg", join(ICONS, "icon.png"), 512);
 
-// The panel's header shows the mark at 18 px, where the splinters are mud.
-writeFileSync(join(HERE, "..", "ui", "src", "mark.svg"), mark({ cut: "micro" }));
-
 // For the README, the docs, and anywhere a PNG is easier than an SVG.
 render("mark-full.svg", join(PNG, "mark-1024.png"), 1024);
 render("mark-full-tile.svg", join(PNG, "mark-tile-1024.png"), 1024);
@@ -329,3 +328,27 @@ execFileSync("magick", [
 
 for (const f of [...product, ...tray]) rmSync(f, { force: true });
 console.log("wrote", PNG, "and", ICONS);
+
+// NSIS is strict: 24-bit BMP at exactly 150x57 for the header strip and
+// 164x314 for the welcome sidebar. Any other size or depth is ignored without
+// a word, which looks exactly like the images never having been configured.
+const NSIS = join(HERE, "..", "ui", "src-tauri", "nsis");
+mkdirSync(NSIS, { recursive: true });
+
+execFileSync("magick", [
+  "-size", "150x57", `xc:${INK.ground}`,
+  "(", "-background", "none", join(OUT, "lockup.svg"), "-resize", "124x36", ")",
+  "-gravity", "center", "-composite",
+  `BMP3:${join(NSIS, "header.bmp")}`,
+]);
+
+execFileSync("magick", [
+  "-size", "164x314", `xc:${INK.ground}`,
+  "(", "-background", "none", join(OUT, "mark-full.svg"), "-resize", "124x124", ")",
+  // High rather than centred: the wizard prints its welcome text across the
+  // lower half of this panel.
+  "-gravity", "north", "-geometry", "+0+52", "-composite",
+  `BMP3:${join(NSIS, "sidebar.bmp")}`,
+]);
+
+console.log("wrote", NSIS);

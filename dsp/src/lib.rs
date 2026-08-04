@@ -144,12 +144,18 @@ impl KwietDsp {
             inner.df.set_atten_lim(db);
         }
 
-        let Inner { df, mono_in, mono_out } = inner;
+        let Inner {
+            df,
+            mono_in,
+            mono_out,
+        } = inner;
         let channels = self.channels as usize;
         let hop = self.hop as usize;
         let inv_channels = 1.0 / channels as f32;
 
-        for block in input.chunks_exact(hop * channels).zip(output.chunks_exact_mut(hop * channels))
+        for block in input
+            .chunks_exact(hop * channels)
+            .zip(output.chunks_exact_mut(hop * channels))
         {
             let (src, dst) = block;
 
@@ -498,7 +504,9 @@ mod tests {
         let samples = dsp.hop as usize * dsp.channels as usize;
         let blocks = 200;
 
-        let tone: Vec<f32> = (0..samples).map(|i| (i as f32 * 0.02).sin() * 0.2).collect();
+        let tone: Vec<f32> = (0..samples)
+            .map(|i| (i as f32 * 0.02).sin() * 0.2)
+            .collect();
         let rtf_tone = measure_rtf(&dsp, &tone, blocks);
 
         let noise = noise_signal(samples);

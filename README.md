@@ -1,110 +1,181 @@
-# Kwiet
+﻿<div align="center">
 
-Suppression de bruit micro **système-wide** pour Windows 11, open source.
+<img src="assets/svg/lockup.svg" alt="Kwiet" width="360">
 
-L'utilisateur active un toggle : son micro réel est nettoyé par IA
-([DeepFilterNet3](https://github.com/Rikorose/DeepFilterNet)) pour **toutes** les
-applications (Google Meet, Discord, …) — sans micro virtuel, sans sélection de
-périphérique.
+**Votre micro, nettoyÃ© par IA, dans toutes vos applications.**
+Pas de micro virtuel. Pas de pÃ©riphÃ©rique Ã  changer. Un interrupteur.
 
-> **Statut : DeepFilterNet3 tourne dans `audiodg.exe`.** Ring buffers SPSC +
-> worker + cdylib Rust avec le modèle DFN3 embarqué (Windows 11 build 26200,
-> micro USB) : latence fixe 30 ms, zéro underrun, **≥ 24 dB de suppression de
-> bruit** mesurés sur source contrôlée, ~2 % d'un cœur.
->
-> Restent : le soak 48 h du jalon 1, le resampling hors 48 kHz, et le bench
-> AGC Chrome du jalon 3.
->
-> L'installation se fait via un **pack d'effets** (INF composant + extension,
-> cf. [`installer/effectpack/`](installer/effectpack/)) — l'édition manuelle
-> des `FxProperties` par endpoint ne fonctionne plus sur Windows 11 récent.
-> Après installation, le pack doit être **choisi** dans Paramètres > Son.
+[![CI](https://github.com/smolleyes/kwiet/actions/workflows/ci.yml/badge.svg)](https://github.com/smolleyes/kwiet/actions/workflows/ci.yml)
+[![Licence](https://img.shields.io/badge/licence-Apache--2.0-9FD3C0)](LICENSE)
+[![Windows 11](https://img.shields.io/badge/Windows-11-0D1417)](#pr%C3%A9requis)
 
-## Architecture
+[English](README.en.md) Â· [Architecture](docs/architecture.md)
 
-**Approche : APO (Audio Processing Object), pas de driver kernel.**
-Un APO est une DLL COM usermode chargée par `audiodg.exe`, enregistrée sur un
-endpoint de capture via le registre (même mécanisme qu'Equalizer APO). Zéro
-signature de driver requise — seulement du code signing usermode (SignPath plus
-tard).
+</div>
 
-**Contrainte centrale : le DSP ne tourne PAS dans le thread temps-réel.**
-`APOProcess()` s'exécute dans le thread RT d'audiodg, période 10 ms
-(480 frames @ 48 kHz float32 mono/stéréo). Interdictions absolues dans ce
-chemin : allocation, locks, syscalls, logging, page faults, appels COM.
-DeepFilterNet3 (~2M params, lookahead 2 frames) ne peut pas y tourner.
+---
+
+## Le problÃ¨me
+
+Les outils de suppression de bruit installent un **micro virtuel**. Il faut donc
+aller le sÃ©lectionner dans Teams, dans Discord, dans Meet, dans chaque
+application â€” et le refaire Ã  chaque fois qu'une mise Ã  jour remet le
+pÃ©riphÃ©rique par dÃ©faut. Quand Ã§a se passe mal, l'application capte le mauvais
+micro et personne ne vous entend.
+
+Kwiet ne crÃ©e aucun pÃ©riphÃ©rique. Il se greffe sur **votre** micro, Ã 
+l'intÃ©rieur du moteur audio de Windows. Les applications ne voient rien
+d'inhabituel : elles ouvrent le micro qu'elles ont toujours ouvert, et le signal
+qui en sort est dÃ©jÃ  propre.
+
+## Comment Ã§a marche
+
+Kwiet est un **APO** (*Audio Processing Object*) : une DLL COM en espace
+utilisateur, chargÃ©e par `audiodg.exe`, le moteur audio de Windows. Aucun
+pilote noyau.
+
+Le dÃ©bruitage est fait par [DeepFilterNet3](https://github.com/Rikorose/DeepFilterNet),
+un rÃ©seau de ~2 M de paramÃ¨tres â€” bien trop lourd pour le thread temps rÃ©el
+d'`audiodg`, qui doit rendre un bloc toutes les 10 ms sans jamais allouer, ni
+prendre un verrou, ni faire un appel systÃ¨me.
 
 ```
-APOProcess (thread RT, audiodg)
-  → push input dans ring buffer SPSC lock-free (préalloué à Initialize())
-  → pop output traité (retard fixe ~40-60 ms)
-  → si underrun/worker mort : PASSTHROUGH input→output, jamais de silence, jamais de blocage
-
-Worker thread (priorité normale, dans le processus audiodg via la DLL)
-  → consomme le ring input, fenêtres 20 ms / hop 10 ms
-  → appelle le cdylib Rust (DeepFilterNet3)
-  → repousse dans le ring output
+APOProcess()  â”€ thread temps rÃ©el d'audiodg â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+   â”‚  pousse l'entrÃ©e dans un anneau SPSC sans verrou (prÃ©allouÃ©)
+   â”‚  rÃ©cupÃ¨re la sortie traitÃ©e (retard fixe de 30 ms)
+   â””â”€ si le worker est mort ou en retard : PASSTHROUGH immÃ©diat
+                                           jamais de silence, jamais de blocage
+Worker  â”€ thread de prioritÃ© normale â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+   â””â”€ consomme l'anneau, appelle le cdylib Rust (DeepFilterNet3)
 ```
 
-Le **fail-open est structurel** : worker mort ⇒ passthrough automatique. Un APO
-qui crashe audiodg = plus aucun son sur la machine ⇒ la robustesse du shim prime
-sur tout.
+Le **fail-open est structurel** : un APO qui plante `audiodg` prive la machine
+entiÃ¨re de son. Tout le design part de lÃ . Si le DSP disparaÃ®t, le son passe
+sans traitement â€” c'est le pire qui puisse arriver.
 
-**Contrôle UI ↔ APO** : shared memory nommée + atomics uniquement (enable/bypass,
-agressivité, VU-mètres avant/après). L'UI ne communique jamais directement avec
-le thread RT.
+DÃ©tails et dÃ©cisions : [`docs/architecture.md`](docs/architecture.md).
 
-Détails et décisions : [`docs/architecture.md`](docs/architecture.md).
+## Mesures
 
-## Structure du repo
+Sur Windows 11 build 26200, micro USB, 48 kHz stÃ©rÃ©o :
 
-| Dossier | Rôle |
+| | |
 |---|---|
-| [`apo/`](apo/) | C++ : shim COM (`IAudioProcessingObject[RT|Configuration]`, `IAudioSystemEffects2`), ring buffers, worker thread, shmem |
-| [`dsp/`](dsp/) | Rust cdylib : wrapper DeepFilterNet3 (crate `df`), ABI C stable — **jalon 2** |
-| [`ui/`](ui/) | Tauri v2 : tray, toggle, slider agressivité, VU-mètres — **jalon 4** |
-| [`installer/`](installer/) | Scripts d'install/désinstall (registre endpoint FX + backup .reg), puis WiX |
-| [`bench/`](bench/) | Latence, CPU, enregistrements A/B, test AGC Chrome/WebRTC — **jalon 3** |
-| [`docs/`](docs/) | Décisions d'archi, procédure de test VM |
+| Suppression de bruit | **â‰¥ 24 dB** sur source contrÃ´lÃ©e |
+| Latence ajoutÃ©e | **30 ms**, fixe |
+| Charge CPU | **~2 %** d'un cÅ“ur (RTF 0,017â€“0,020) |
+| DÃ©crochages | 0 |
 
-## Jalons (ordre strict)
+## Installation
 
-1. **APO passthrough stable** — copie input→output, enregistré sur un endpoint
-   de capture, survit 48 h : changements de sample rate, débranchement à chaud,
-   veille/reprise, plusieurs applis simultanées. Install/uninstall scriptés et
-   testés en VM.
-2. **Intégration DSP** — ring buffers + worker + cdylib Rust (d'abord un gain
-   -6 dB pour valider la plomberie, puis DFN3).
-3. **Bench Chrome** — mesurer ce que l'AGC WebRTC fait du bruit résiduel,
-   calibrer l'atténuation pour ne pas le déclencher.
-4. **UI Tauri + installeur WiX.**
+> [!IMPORTANT]
+> **AprÃ¨s l'installation, il reste une Ã©tape que Kwiet ne peut pas faire Ã  votre
+> place.** Windows 11 exige que vous choisissiez vous-mÃªme le pack d'effets :
+> **ParamÃ¨tres â†’ Son â†’ votre micro â†’ AmÃ©liorations audio â†’ Kwiet**.
+> Tant que ce n'est pas fait, Kwiet est installÃ© et complÃ¨tement inerte. Le
+> panneau vous le dira, avec un bouton pour ouvrir la bonne page.
 
-## Build (apo/)
+1. TÃ©lÃ©chargez `Kwiet_x.y.z_x64-setup.exe` depuis les
+   [releases](https://github.com/smolleyes/kwiet/releases).
+2. Lancez-le. Il demande l'Ã©lÃ©vation : le pack d'effets est un package pilote,
+   il s'enregistre auprÃ¨s de Windows via `pnputil`. Le son est briÃ¨vement coupÃ©.
+3. Choisissez Kwiet dans les amÃ©liorations audio de votre micro (voir ci-dessus).
+4. L'icÃ´ne dans la zone de notification ouvre le panneau.
 
-Prérequis : Visual Studio 2019+ (workload C++, Windows 10/11 SDK), CMake ≥ 3.21.
+La dÃ©sinstallation retire le pack du magasin de pilotes en mÃªme temps que
+l'application.
+
+### PrÃ©requis
+
+- Windows 11 **24H2 ou plus rÃ©cent** (x64). Le mÃ©canisme de pack d'effets
+  utilisÃ© ici n'existe pas sur les versions antÃ©rieures.
+- Un micro qui nÃ©gocie **48 kHz**. En dehors, Kwiet se met volontairement en
+  passthrough plutÃ´t que de rÃ©Ã©chantillonner Ã  l'aveugle.
+
+> [!WARNING]
+> **Signature.** Les binaires de release sont signÃ©s avec un certificat de
+> dÃ©veloppement, ce qui suffit pour construire et tester chez soi mais **pas**
+> pour une installation propre sur une machine tierce : Windows refuse un
+> package pilote dont le catalogue ne remonte pas Ã  une autoritÃ© de confiance.
+> La distribution publique demande une signature attestation via le Partner
+> Center. Ce n'est pas encore en place, et c'est le principal obstacle avant que
+> Kwiet soit installable par tout le monde.
+
+## Le panneau
+
+Une seule idÃ©e, rÃ©pÃ©tÃ©e partout : **le cÃ©ladon est ce que vos applications
+reÃ§oivent, l'ambre est ce que Kwiet a retirÃ©.** L'Ã©cart entre les deux est le
+produit.
+
+- **Oscilloscope** â€” les derniÃ¨res secondes, en deux enveloppes superposÃ©es.
+- **VU-mÃ¨tre** â€” l'instant, en une barre : le remplissage vif est le signal
+  transmis, l'ambre qui dÃ©passe est le bruit supprimÃ©.
+- **IntensitÃ©** â€” de discrÃ¨te Ã  maximale. Plus haut, le silence entre les mots
+  devient total, au risque de raboter les attaques.
+- **Interrupteur** â€” contournement immÃ©diat, sans couper le flux.
+
+Le panneau parle **franÃ§ais ou anglais**, selon Windows, et se bascule Ã  la main
+en bas Ã  droite.
+
+## Construire depuis les sources
+
+PrÃ©requis : Visual Studio 2019+ (charge de travail C++, SDK Windows 10/11),
+CMake â‰¥ 3.21, Rust stable, Node 20+.
 
 ```powershell
+# 1. L'APO (C++)
 cmake -S apo -B apo/build -A x64
 cmake --build apo/build --config Release
-# → apo/build/Release/KwietApo.dll
+
+# 2. Le DSP (Rust, embarque le modÃ¨le DeepFilterNet3)
+cd dsp ; cargo build --release ; cd ..
+
+# 3. Le pack d'effets, signÃ©
+.\installer\effectpack\build-package.ps1 -Version 0.2.1 `
+    -CertPath mon-certificat.pfx -CertPassword $env:PFX_PW
+
+# 4. L'application et l'installeur
+cd ui ; npm ci ; npm run tauri build
+# â†’ ui/src-tauri/target/release/bundle/nsis/Kwiet_0.2.1_x64-setup.exe
 ```
 
-## Installation — VM UNIQUEMENT
+> [!CAUTION]
+> **N'installez pas un APO en cours de dÃ©veloppement sur votre poste de
+> travail.** Un APO qui plante prive la machine de son au dÃ©marrage. Utilisez
+> une VM ou une machine dÃ©diÃ©e : [`docs/procedure-test-vm.md`](docs/procedure-test-vm.md).
 
-> ⚠️ **Un APO buggé = machine sans son.** Ne jamais installer sur un poste de
-> travail. Cible : VM Windows 11 ou machine dédiée, avec checkpoint + export
-> .reg avant chaque install. Procédure complète :
-> [`docs/procedure-test-vm.md`](docs/procedure-test-vm.md).
+Les icÃ´nes et le logo sont gÃ©nÃ©rÃ©s : `node assets/build-assets.mjs`.
 
-```powershell
-cd installer
-.\install.ps1      # backup .reg automatique + sélection interactive de l'endpoint
-.\status.ps1       # vérifie l'état de l'installation
-.\uninstall.ps1    # restauration propre
-```
+## Structure du dÃ©pÃ´t
 
-Flux shared mode uniquement : les flux exclusive/raw bypassent l'APO (accepté).
+| Dossier | RÃ´le |
+|---|---|
+| [`apo/`](apo/) | C++ : le shim COM, les anneaux SPSC, le worker, la mÃ©moire partagÃ©e |
+| [`dsp/`](dsp/) | Rust cdylib : DeepFilterNet3 derriÃ¨re une ABI C stable |
+| [`ui/`](ui/) | Tauri v2 : panneau, zone de notification, installeur NSIS |
+| [`installer/`](installer/) | Pack d'effets (INF, catalogue) et scripts d'installation |
+| [`assets/`](assets/) | IdentitÃ© visuelle, gÃ©nÃ©rÃ©e par script |
+| [`bench/`](bench/) | Outils de mesure |
+| [`docs/`](docs/) | DÃ©cisions d'architecture, procÃ©dure de test |
+
+## Ce qui n'est pas fait
+
+Par honnÃªtetÃ©, plutÃ´t que de le dÃ©couvrir Ã  l'usage :
+
+- **Signature attestation** â€” voir l'avertissement plus haut. C'est le blocage.
+- **RÃ©Ã©chantillonnage** â€” hors 48 kHz, Kwiet passe en passthrough.
+- **Soak 48 h** â€” changements de frÃ©quence, dÃ©branchement Ã  chaud, veille et
+  reprise, plusieurs applications : jamais tenu sur une durÃ©e longue.
+- **Annulation d'Ã©cho** â€” dÃ©libÃ©rÃ©ment absente. La rÃ©clamer ferait dÃ©sactiver Ã 
+  Chrome son propre annuleur, qui est bien meilleur que ce qu'on livrerait.
+- **La latence annoncÃ©e** (30 ms) ne compte que l'anneau, pas le lookahead
+  propre Ã  DeepFilterNet3.
 
 ## Licence
 
-[Apache-2.0](LICENSE). DeepFilterNet3 est dual MIT/Apache-2.0, compatible.
+[Apache-2.0](LICENSE).
+
+DeepFilterNet3 est sous double licence MIT/Apache-2.0, compatible. Le modÃ¨le
+embarquÃ© provient du projet [DeepFilterNet](https://github.com/Rikorose/DeepFilterNet)
+de Hendrik SchrÃ¶ter.
+
