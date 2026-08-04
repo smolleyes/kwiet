@@ -845,6 +845,86 @@ Pistes, par ordre de préférence :
    a été explicitement écartée au départ (« sans micro virtuel »). À rouvrir
    seulement si 1 et 2 échouent.
 
+## 12. ✅ Produit livrable — identité, détection, installeur (2026-08-04)
+
+### Détecter un pack installé mais non sélectionné
+
+C'est le piège qui a coûté le plus de temps sur ce projet : un pack installé
+mais non choisi est **totalement inerte**, et rien dans la pile audio ne le
+signale — ni erreur, ni ligne de log, ni propriété COM. Le panneau le détecte
+désormais, à partir de deux faits écrits par Windows lui-même :
+
+| Fait | Où le lire |
+|---|---|
+| Le pack est **installé** | une sous-clé de `HKLM\SYSTEM\CurrentControlSet\Enum\SWD\DriverEnum` nommée `{ExtensionId}#KwietEffectPack&…` |
+| Le pack est **sélectionné** sur un endpoint | une valeur de `…\MMDevices\Audio\Capture\{guid}\FxProperties` dont le nom commence par **notre propre CLSID** |
+
+Le second a été trouvé par observation : avec Kwiet sélectionné sur un micro et
+pas sur l'autre, seul le premier porte
+`{65d564e6-…},100 = SWD\DRIVERENUM\{…}#KwietEffectPack&…`. On matche donc sur le
+**préfixe CLSID** et non sur l'identifiant de propriété `100`, dont on ignore la
+sémantique — cette valeur est un détail d'implémentation non documenté.
+
+Quel micro compte vient de COM (`GetDefaultAudioEndpoint(eCapture,
+eCommunications)`), pas du registre. Cela permet de distinguer un troisième
+état, qui autrement ressemble à un bug : **pack sélectionné sur un autre micro
+que celui que Windows donne aux applications**.
+
+`PackStatus` porte un drapeau `known`, sans quoi « pas encore regardé » et
+« pas installé » seraient la même valeur et le panneau annoncerait un pack
+absent pendant ses deux premières secondes.
+
+> ⚠️ `ms-settings:sound-defaultinputproperties` **ne fait pas** ce que son nom
+> promet : sur 26200 elle ouvre les propriétés d'un périphérique fantôme
+> intitulé « Null description », sans section Améliorations audio. On ouvre
+> `ms-settings:sound`, qui marche.
+
+### Bug corrigé : le flux fantôme
+
+L'UI gardait la section de contrôle mappée en permanence, pour conserver les
+réglages entre deux flux. Une section nommée vit tant qu'**un** handle existe :
+quand audiodg démontait l'APO sans appeler `UnlockForProcess` — ce qui arrive en
+désélectionnant le pack — le bloc restait mappé avec `streaming` à 1. Le panneau
+affichait alors une ligne d'état complète, aucun signal, et masquait l'écran qui
+aurait expliqué pourquoi.
+
+L'UI ouvre désormais la section **par appel**. L'existence de la section
+signifie ce que le panneau lui fait dire : l'APO est chargé. Les réglages sont
+repoussés par le thread de veille dès qu'il voit une nouvelle génération.
+
+### Installeur
+
+Bundle NSIS de Tauri, `perMachine` (le pack est un package pilote, donc
+élévation), français et anglais. Le pack est embarqué comme ressource et posé
+par `pack.ps1`, livré à côté de lui pour pouvoir réparer une installation à la
+main. Les hooks `NSIS_HOOK_POSTINSTALL` / `PREUNINSTALL` ne font qu'orchestrer.
+
+Trois pièges payés :
+
+1. **L'installeur NSIS est 32 bits.** WOW64 redirige `System32` vers
+   `SysWOW64`, où `pnputil.exe` n'existe pas : l'installation échoue sur un
+   « commande introuvable » qui ne dit rien de la cause. Corrigé des deux côtés
+   (`Sysnative` dans le script, `DisableX64FSRedirection` dans le hook).
+2. **24 paquets Kwiet s'étaient accumulés** dans le magasin de pilotes, un par
+   itération de dev. La désinstallation énumère et retire *tous* les paquets
+   dont le nom d'origine est l'un des nôtres.
+3. **`DriverVer` porte un quatrième champ à zéro.** La version publiée est la
+   version. Y glisser une date casserait l'ordre au changement d'année.
+
+Les noms publiés (`oemNN.inf`) sont relus depuis `pnputil /enum-drivers` plutôt
+que depuis un fichier d'état : le magasin est la vérité, un fichier peut mentir.
+Le découpage ne cherche que des noms de fichiers, donc il est indépendant de la
+langue de Windows — les libellés, eux, sont traduits.
+
+### Identité visuelle
+
+Générée par `assets/build-assets.mjs` : la marque est un disque céladon avec la
+voix creusée en négatif et le bruit tenu dehors en éclats ambre. Trois découpes,
+parce qu'un seul dessin ne peut pas servir 16 px et 512 px, et deux jeux
+d'icônes — produit (tuile sombre) et tray (transparent, il se pose sur une barre
+des tâches claire ou sombre). Le logotype est de la géométrie, sans dépendance à
+une police installée : GitHub rastérise les SVG sous Linux.
+
 ## 8. Questions ouvertes
 
 - **`APOInitSystemEffects3`** (Win11 22H2+) : layout différent de SE2 — le
