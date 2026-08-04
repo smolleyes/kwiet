@@ -1277,9 +1277,42 @@ fréquence : `{69E1F79F-…}` (393 fois, la seule inconnue franche qui reste),
 `{F235855F-…}` (`IApoAcousticEchoCancellation2`), `{B1176E34-…}`
 (`IAudioSystemEffectsCustomFormats`), `{CA2CFBDE-…}` (`…Notifications2`).
 
-Les deux dernières sont désormais nommées et implémentables. `{69E1F79F-…}`
-demanderait les symboles publics de `VirtualSurroundApo.dll` pour connaître sa
-signature.
+Les deux dernières sont désormais nommées et implémentables.
+
+### `{69E1F79F-…}` identifiée : `IAudioProcessingObjectInternal`
+
+La méthode, en trois temps, sans désassembleur :
+
+1. **Extraire la signature PDB du binaire.** Le répertoire de debug d'un PE
+   contient un enregistrement CodeView `RSDS` : GUID, âge, nom du PDB. De quoi
+   construire l'URL du symbol server de Microsoft —
+   `https://msdl.microsoft.com/download/symbols/<pdb>/<GUID><âge>/<pdb>`.
+2. **Télécharger le PDB.** `VirtualSurroundApo.pdb`, 0,34 Mo, publiquement
+   servi.
+3. **En extraire les noms de types**, qui y figurent en clair.
+
+Le PDB nomme exactement six interfaces de la famille APO :
+`IAudioProcessingObject`, `…Configuration`, `…RT`, `IAudioSystemEffects`,
+`…2`, et **`IAudioProcessingObjectInternal`**. Les cinq premières ont un GUID
+connu ; dans la table QI du binaire, l'inconnue siège entre
+`IAudioProcessingObject` et `…RT`. Il ne reste qu'un nom pour un GUID.
+
+> Déduction par élimination, solide mais non prouvée formellement. Le PDB ne
+> relie pas explicitement le GUID au nom.
+
+**Ce que le nom implique.** *Internal* : interface interne Microsoft, absente du
+SDK, du registre et du web parce qu'elle n'est pas destinée aux tiers. On n'en
+connaît ni les méthodes, ni le contrat, ni la sémantique. Windows la réclame à
+chaque instanciation — 393 fois sur une seule session de test — et **aucun APO
+tiers ne peut la fournir**.
+
+Si le pipe communications en dépend, cela explique l'ensemble des observations
+de la journée, et pas seulement pour Kwiet : ni le format, ni la latence, ni une
+annulation d'écho réelle n'y changeront quoi que ce soit. Les APO de Microsoft
+la implémentent, les autres non.
+
+C'est une hypothèse, pas une conclusion — mais c'est la première qui explique
+pourquoi tout le reste a échoué.
 
 ## 8. Questions ouvertes
 
