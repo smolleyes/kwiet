@@ -1,113 +1,103 @@
-# Procédure de test en VM — jalon 1
+# Testing in a VM
 
-**Règle absolue : l'APO ne s'installe JAMAIS sur le poste de travail.**
-Un APO buggé peut crasher `audiodg.exe` en boucle = plus aucun son sur la
-machine, y compris pendant la session de debug. Tout se fait en VM Windows 11
-(ou machine dédiée sacrifiable).
+**Rule: never install a development APO on a working machine.** An APO with a bug
+can crash `audiodg.exe` in a loop, which means no sound at all on that machine —
+including during the debugging session that would fix it. Use a Windows 11 VM, or
+a dedicated machine you are willing to lose.
 
-## 1. Préparation de la VM
+## 1. Preparing the VM
 
-1. VM Windows 11 x64 (Hyper-V « Création rapide », VMware ou VirtualBox), avec
-   audio virtuel activé :
-   - Hyper-V : session étendue (`vmconnect` avec redirection audio) ;
-   - VMware : `sound.present = TRUE` ; VirtualBox : contrôleur audio + micro hôte.
-   Il faut **au moins un endpoint de capture** visible dans Paramètres > Son.
-2. Installer les outils de build (VS Build Tools C++ + CMake) **ou** compiler
-   sur l'hôte et copier `KwietApo.dll` + le dossier `installer/` dans la VM.
-3. Créer un **checkpoint/snapshot « clean »** de la VM.
-4. Dans la VM, créer un point de restauration Windows, puis exporter
-   manuellement les clés sensibles (ceinture + bretelles, l'installeur refait
-   ses propres backups) :
+1. A Windows 11 x64 VM (Hyper-V Quick Create, VMware, VirtualBox) with virtual
+   audio enabled:
+   - Hyper-V: enhanced session (`vmconnect` with audio redirection);
+   - VMware: `sound.present = TRUE`; VirtualBox: audio controller + host mic.
+
+   You need **at least one capture endpoint** visible in Settings > Sound.
+2. Install the build tools (VS Build Tools C++ and CMake) **or** build on the host
+   and copy the effect pack into the VM.
+3. Take a **clean checkpoint/snapshot** of the VM.
+4. Inside the VM, create a Windows restore point, then export the sensitive keys
+   by hand — belt and braces, the installer takes its own backups too:
 
    ```powershell
    reg export "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture" C:\backup-capture.reg /y
    reg export "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Audio" C:\backup-audio.reg /y
    ```
 
-## 2. Ordre des opérations — première fois
+## 2. Order of operations, the first time
 
-> **Le désinstalleur se teste AVANT la première installation.**
+> **Test the uninstaller before the first install.**
 
 ```powershell
-cd installer
+cd installer\effectpack
 
-# (a) Sur VM vierge : doit afficher « Rien à désinstaller » et sortir en code 0.
-.\uninstall.ps1
+# (a) On a clean VM: must report nothing to remove and exit 0.
+.\pack.ps1 -Action uninstall
 
-# (b) Installation (choisir un endpoint qui N'EST PAS le périphérique de
-#     communication par défaut).
-.\install.ps1
+# (b) Install.
+.\pack.ps1 -Action install -PackageDir package
 
-# (c) Vérification.
-.\status.ps1
+# (c) Choose Kwiet in Settings > Sound > [microphone] > Audio enhancements.
+#     Installing does not enable it; nothing in the audio stack says so.
 
-# (d) Test fonctionnel (voir §3).
+# (d) Functional test (see §3).
 
-# (e) Désinstallation immédiate + vérification du retour à l'état initial.
-.\uninstall.ps1
+# (e) Remove immediately, and check the machine returned to its initial state.
+.\pack.ps1 -Action uninstall
 reg export "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture" C:\after-uninstall.reg /y
 fc C:\backup-capture.reg C:\after-uninstall.reg
 ```
 
-Seulement quand ce cycle install → uninstall → diff propre passe, commencer
-les vraies sessions de test.
+Only once that install → uninstall → clean diff cycle passes should real test
+sessions begin.
 
-## 3. Vérifier que l'APO charge
+## 3. Checking that the APO loads
 
-1. `Paramètres > Son > [périphérique] > Propriétés` : **« Améliorations
-   audio » doit être activé** — sinon audiodg ne charge aucun APO tiers.
-2. Ouvrir l'Enregistreur vocal (ou le test micro des Paramètres) pour créer un
-   flux de capture, puis :
+1. Open Voice Recorder (or the microphone test in Settings) to create a capture
+   stream.
+2. Open the Kwiet panel. **A stream visible in the panel is the only reliable
+   instrument.** Two tests that look convincing and prove nothing:
+   - *"The DLL is loaded in audiodg"* — DLLs stay mapped long after they stop
+     being used;
+   - *"No new log lines"* — a stream already locked writes nothing while running.
 
-   ```powershell
-   tasklist /m KwietApo.dll     # doit lister audiodg.exe
-   .\status.ps1                 # section audiodg : [OK]
-   ```
+   Both produced false negatives repeatedly during development.
+3. With the effect bypassed, the recorded sound must be identical to the input.
 
-3. Le son enregistré doit être identique à l'entrée (passthrough bit-exact,
-   retard nul).
+If it will not load, check in order: is the pack selected in audio enhancements →
+is the driver package in the store (`pnputil /enum-drivers`) → does the panel say
+"effect pack missing" → Event Viewer (Application log, *Audio* and
+*AudioEndpointBuilder* sources, and `audiodg.exe` crashes).
 
-En cas d'échec de chargement, vérifier dans l'ordre : améliorations audio
-activées → `DisableProtectedAudioDG = 1` → CLSID présent sous
-`HKLM\Software\Classes\CLSID` → valeurs FxProperties (`status.ps1`) → Observateur
-d'événements (journal Application, sources *Audio* / *AudioEndpointBuilder* et
-crashs `audiodg.exe`).
+## 4. Stability matrix
 
-## 4. Batterie jalon 1 (stabilité 48 h)
+The APO must survive all of the following **without crashing audiodg and without
+losing audio**. Falling back to passthrough is fine; permanent silence is not.
 
-L'APO doit survivre à tout ce qui suit, **sans crash d'audiodg ni perte
-audio** (un passage en passthrough est OK, un silence définitif non) :
-
-| Test | Procédure |
+| Test | Procedure |
 |---|---|
-| Changement de sample rate | Propriétés du périphérique > Avancé : alterner 44,1 kHz / 48 kHz pendant un enregistrement |
-| Débranchement à chaud | Retirer/rebrancher le micro USB passthrough, ou désactiver/réactiver le périphérique dans le Gestionnaire de périphériques pendant un flux actif |
-| Veille/reprise | Cycle veille → reprise avec flux actif (selon hyperviseur : save/restore de la VM) |
-| Multi-applis | Chrome (meet.google.com, test micro) + Discord simultanés ≥ 1 h |
-| Modes | Un flux « communications » (Discord) + un flux « default » (Enregistreur vocal) en parallèle |
-| Soak | 48 h avec flux de capture actif ; surveiller crashs audiodg (Observateur d'événements) et fuite mémoire (`Get-Process audiodg` périodique) |
+| Sample-rate change | Device properties > Advanced: alternate 44.1 kHz / 48 kHz during a recording |
+| Hot-plug | Unplug and replug the USB microphone, or disable and re-enable the device in Device Manager while a stream is active |
+| Sleep/resume | Sleep → resume with an active stream (or save/restore the VM, depending on the hypervisor) |
+| Several apps | Chrome (meet.google.com) and Discord simultaneously for at least an hour |
+| Modes | One communications stream (Discord) and one default stream (Voice Recorder) in parallel |
+| Soak | 48 h with an active capture stream; watch for audiodg crashes in Event Viewer and for memory growth (`Get-Process audiodg`) |
 
-Journal de bord des runs dans `bench/` (jalon 3 formalisera l'outillage).
+## 5. Emergency recovery
 
-## 5. Récupération d'urgence
+If the VM's audio is dead after an install:
 
-Si l'audio de la VM est mort après une install :
-
-1. `installer\uninstall.ps1` (ou `-ImportBackup`) puis redémarrer la pile :
+1. `pack.ps1 -Action uninstall`, then restart the stack:
    `Restart-Service AudioEndpointBuilder -Force ; Start-Service Audiosrv`.
-2. Si audiodg crashe en boucle et empêche tout : renommer
-   `C:\Program Files\Kwiet\KwietApo.dll` (au besoin en mode sans échec), rebooter,
-   puis `reg import` des backups de `installer\backups\`.
-3. Dernier recours : point de restauration Windows, ou restauration du
-   checkpoint de la VM.
+2. If audiodg crashes in a loop and blocks everything: rename the DLL in the
+   driver store (safe mode if necessary), reboot, then `reg import` the backups.
+3. Last resort: the Windows restore point, or the VM checkpoint.
 
-Nota : après plusieurs crashs d'audiodg, Windows peut désactiver de lui-même
-les améliorations audio de l'endpoint — les réactiver après correction.
+Note: after several audiodg crashes Windows may disable the endpoint's audio
+enhancements on its own. Re-enable them once the fix is in.
 
-## 6. Rappels
+## 6. Reminders
 
-- Ne jamais équiper l'endpoint « périphérique de communication par défaut »
-  tant que le passthrough n'est pas validé 48 h.
-- Shared mode uniquement : les flux exclusifs/RAW bypassent l'APO (accepté).
-- Recréer un checkpoint « clean » après chaque évolution validée de la
-  procédure d'install.
+- Shared mode only: exclusive and RAW streams bypass the APO, by design.
+- Take a fresh clean checkpoint after every validated change to the install
+  procedure.
