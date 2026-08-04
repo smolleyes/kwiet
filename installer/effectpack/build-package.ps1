@@ -33,6 +33,11 @@ param(
     # expire — y compris pour les paquets déjà installés chez les utilisateurs.
     # Passer une chaîne vide pour construire hors ligne.
     [string]$TimestampUrl = 'http://timestamp.digicert.com',
+
+    # Diagnostic uniquement : autorise une build KWIET_DEV_LOG avec un numéro de
+    # version, le temps d'aller lire ce que l'APO reçoit. Un paquet ainsi
+    # construit obéit au registre plutôt qu'au panneau — il ne se distribue pas.
+    [switch]$AllowDevBuild,
     [string]$ApoDll,
     [string]$DspDll,
     [string]$OutDir
@@ -76,8 +81,8 @@ plutot qu'au panneau. Reconfigure sans l'option :
     cmake -S apo -B apo/build -A x64 -DKWIET_DEV_LOG=OFF
     cmake --build apo/build --config Release --clean-first
 '@
-    if ($Version) { throw $message }
-    Write-Warning $message   # sans -Version, c'est une build locale : on avertit
+    if ($Version -and -not $AllowDevBuild) { throw $message }
+    Write-Warning $message   # build locale ou diagnostic assumé : on avertit
 }
 
 Write-Host '=== Kwiet — assemblage du pack d''effets ==='

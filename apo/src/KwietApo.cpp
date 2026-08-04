@@ -137,16 +137,23 @@ HRESULT KwietApo::Inner::QueryInterface(REFIID riid, void** ppvObject)
     } else if (riid == __uuidof(IApoAuxiliaryInputRT)) {
         KWIET_LOG("QI ok: IApoAuxiliaryInputRT");
         *ppvObject = static_cast<IApoAuxiliaryInputRT*>(&o);
-        // IApoAcousticEchoCancellation is deliberately NOT offered.
+        // IApoAcousticEchoCancellation is deliberately NOT offered, and this is
+        // now settled by measurement rather than by argument.
         //
-        // Claiming it makes Chrome switch its own echo canceller off and rely
-        // on ours -- and WebRTC's AEC3 is far better than anything we would
-        // ship. Kwiet's job is noise suppression; echo cancellation is best
-        // left to the application. The auxiliary-input interfaces stay: the
-        // reference stream costs nothing and is useful for diagnostics.
+        // Advertising it was tested on 2026-08-04 precisely to find out whether
+        // it would bring Chrome into the effects chain. It does not: with the
+        // marker offered and the log confirming "QI ok", Chrome still never
+        // instantiated this APO -- neither for a Meet call nor for a page
+        // requesting the microphone with its own processing switched off. A
+        // normal WASAPI capture, in the same minute, locked and processed
+        // normally.
         //
-        // Whether this marker is what got us into the pipe is exactly what this
-        // build tests: three changes landed at once and none was measured alone.
+        // So there is nothing to gain and something to lose: a native
+        // application that does use the communications pipe would switch its
+        // own canceller off and expect ours, and we cancel nothing --
+        // AcceptInput only counts the reference frames. The auxiliary-input
+        // interfaces stay: the reference stream costs nothing and is useful for
+        // diagnostics.
     } else {
 #if defined(KWIET_DEV_LOG)
         char g[40];

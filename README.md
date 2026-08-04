@@ -88,6 +88,27 @@ Uninstalling removes the pack from the driver store along with the app.
 - A microphone that negotiates **48 kHz**. Outside that, Kwiet deliberately
   falls back to passthrough rather than resampling blind.
 
+### Where it applies
+
+| | |
+|---|---|
+| Native applications — Discord, Zoom, Teams, OBS, games, recorders | ✅ |
+| **Firefox** | ✅ |
+| **Chrome, Edge, and Electron apps** | ⛔ |
+
+Chromium runs its own WebRTC audio pipeline and asks Windows for unprocessed
+audio so the two do not stack. A raw stream, by Microsoft's definition, bypasses
+every effect except a vendor's always-on processing — and a selectable effect
+pack is not always-on. Measured here: with a microphone capture open, Firefox
+makes this APO lock and process while Chrome never instantiates it at all, in
+four separate configurations including `--disable-features=WASAPIRawAudioCapture`.
+
+This is not specific to Kwiet. Windows' own **Voice Clarity** is bypassed the
+same way, through the same mechanism. Tools that do reach a Chrome tab —
+Krisp, NVIDIA Broadcast — get there by installing a **virtual microphone**,
+which is precisely the thing Kwiet was built to avoid. Details:
+[`docs/architecture.md`](docs/architecture.md) §14.
+
 ## The panel
 
 One idea, repeated everywhere: **celadon is what your apps receive, amber is

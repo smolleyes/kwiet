@@ -1000,6 +1000,75 @@ machine de l'utilisateur. Un certificat de signature de code commercial chaîne
 vers une racine déjà présente partout et ne demande d'ajouter rien du tout ;
 c'est la seule voie qui évite complètement ce compromis.
 
+## 14. ⛔ Chromium contourne les packs d'effets — Firefox non (2026-08-04)
+
+C'est la limite fondamentale du produit, et elle n'est pas dans notre code.
+
+### Mesures, même machine, même micro, même heure
+
+| Consommateur | Instanciation de l'APO | `LockForProcess` | Verdict |
+|---|---|---|---|
+| ffmpeg (WASAPI partagé) | oui | oui | **traite** |
+| Enregistreur vocal, vumètre des Paramètres | oui | oui | **traite** |
+| **Firefox** `getUserMedia` | oui | 18:04:55 | **traite** — VU −38 dB → −76 dB |
+| **Chrome / Edge** `getUserMedia` | **aucune** | non | contourné |
+
+Le cas Chrome a été testé dans quatre configurations, toutes à zéro ligne de
+journal :
+
+1. contraintes par défaut (`echoCancellation`/`noiseSuppression`/`autoGainControl` à `true`) ;
+2. les trois contraintes à `false` ;
+3. `--disable-features=WASAPIRawAudioCapture` ;
+4. avec `IApoAcousticEchoCancellation` déclarée par l'APO.
+
+Aucune ne change quoi que ce soit. Chromium n'instancie jamais l'APO.
+
+### Pourquoi
+
+Chromium fait tourner son propre pipeline WebRTC (AEC3, suppression de bruit,
+AGC) et demande à Windows de l'audio non traité pour que les deux ne se
+superposent pas. La définition Microsoft d'un flux RAW le dit :
+*« bypasses all signal processing except for endpoint specific, **always-on**
+processing in the APO »*. Un pack d'effets sélectionnable n'est pas always-on :
+il est donc écarté.
+
+Ce n'est pas dirigé contre nous. **Voice Clarity, le pack de Microsoft, subit le
+même sort** — c'est le même mécanisme, le même type de marqueur d'endpoint.
+Aucun pack d'effets n'atteint un onglet Chrome.
+
+### Ce que ça implique pour le produit
+
+La promesse d'origine — « nettoyé pour **toutes** les applications » — ne tient
+pas telle quelle. Le périmètre réel :
+
+- ✅ applications natives : Discord natif, Zoom, Teams natif, OBS, jeux, tout
+  enregistreur ;
+- ✅ **Firefox**, et vraisemblablement tout moteur Gecko ;
+- ⛔ Chrome, Edge, Brave, Vivaldi, et toute application Electron — donc Meet,
+  Teams web, Slack, Discord *desktop* (Electron).
+
+Et c'est là qu'on comprend rétrospectivement pourquoi la concurrence fait ce
+qu'elle fait : **Krisp et NVIDIA Broadcast créent un micro virtuel**. Ce choix,
+qu'on a écarté au premier jour comme inélégant, est exactement ce qui leur permet
+de fonctionner dans Chrome — un périphérique virtuel est un périphérique, et
+Chromium le capture comme n'importe quel autre. Notre approche est plus propre
+pour l'utilisateur et structurellement aveugle à Chromium.
+
+### Ce que ça ne remet pas en cause
+
+L'APO fonctionne. Le DSP fonctionne. La chaîne d'installation fonctionne. La
+limite est en amont de nous, dans la décision d'un navigateur, et elle
+s'applique identiquement à tous nos concurrents non-virtuels.
+
+### Piège de méthode, encore le même
+
+Pendant des heures, la conclusion « ça marche dans Meet » a reposé sur
+l'animation de niveau de Meet. Cet indicateur bougeait — mais il mesurait la
+prévisualisation du sélecteur de micro (qui, elle, passe par l'APO), pas l'audio
+de l'appel. Troisième occurrence du même défaut : **seul le journal de l'APO et
+le bloc de contrôle prouvent quelque chose.** Tout indicateur d'application est
+une hypothèse déguisée.
+
 ## 8. Questions ouvertes
 
 - **`APOInitSystemEffects3`** (Win11 22H2+) : layout différent de SE2 — le
