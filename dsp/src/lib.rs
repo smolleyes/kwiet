@@ -29,13 +29,18 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 // the crate is referred to by.
 use df::tract::{DfParams, DfTract, RuntimeParams};
 use ndarray::{ArrayView2, ArrayViewMut2};
+use sonora::config::{Config, EchoCanceller};
+use sonora::{AudioProcessing, StreamConfig};
 
 /// ABI version reported by [`kwiet_dsp_abi_version`].
 ///
 /// v2 replaced the milestone-2 placeholder gain with DeepFilterNet3, which
 /// changed what `kwiet_dsp_set_attenuation_db` means and added
 /// [`kwiet_dsp_block_frames`].
-const ABI_VERSION: u32 = 2;
+///
+/// v3 added acoustic echo cancellation ahead of the denoiser, and with it
+/// [`kwiet_dsp_process_render`] for the loopback reference.
+const ABI_VERSION: u32 = 3;
 
 /// Success.
 const OK: i32 = 0;
@@ -73,8 +78,18 @@ const MAX_ATTEN_LIM_DB: f32 = 100.0;
 /// and DeepFilterNet's mono, planar frames.
 struct Inner {
     df: DfTract,
+    /// WebRTC's AEC3, ported to Rust. Runs *before* the denoiser: echo is a
+    /// correlated copy of a signal we are given, which an adaptive filter
+    /// removes far better than a denoiser trained on unrelated noise -- and
+    /// leaving it to the denoiser would mean asking it to erase speech.
+    aec: AudioProcessing,
     mono_in: Vec<f32>,
+    /// Near-end after echo cancellation, before denoising.
+    mono_aec: Vec<f32>,
     mono_out: Vec<f32>,
+    /// Reference frames downmixed to mono for the canceller's render path.
+    mono_render: Vec<f32>,
+    render_scratch: Vec<f32>,
 }
 
 /// Opaque engine handle shared with the C host.
@@ -116,6 +131,18 @@ impl KwietDsp {
             return None;
         }
 
+        // Echo cancellation only. Noise suppression and gain control stay off:
+        // DeepFilterNet3 does the first far better, and the second belongs to
+        // the application, which is already doing it.
+        let aec = AudioProcessing::builder()
+            .config(Config {
+                echo_canceller: Some(EchoCanceller::default()),
+                ..Default::default()
+            })
+            .capture_config(StreamConfig::new(REQUIRED_SAMPLE_RATE, 1))
+            .render_config(StreamConfig::new(REQUIRED_SAMPLE_RATE, 1))
+            .build();
+
         Some(Self {
             sample_rate,
             channels,
@@ -124,10 +151,51 @@ impl KwietDsp {
             atten_dirty: AtomicBool::new(false),
             inner: UnsafeCell::new(Inner {
                 df,
+                aec,
                 mono_in: vec![0.0; hop],
+                mono_aec: vec![0.0; hop],
                 mono_out: vec![0.0; hop],
+                mono_render: vec![0.0; hop],
+                render_scratch: vec![0.0; hop],
             }),
         })
+    }
+
+    /// Feeds one block of the far-end (loopback) signal to the echo canceller.
+    ///
+    /// Called from the same worker thread as [`Self::process`], before it, so
+    /// the canceller sees what the speakers played before it sees what the
+    /// microphone heard.
+    ///
+    /// # Safety
+    ///
+    /// Caller must guarantee no other thread is inside the engine.
+    unsafe fn process_render(&self, render: &[f32], channels: usize) -> Result<(), i32> {
+        // SAFETY: single-worker contract, see the type-level comment.
+        let inner = unsafe { &mut *self.inner.get() };
+        let hop = self.hop as usize;
+        if channels == 0 || render.len() != hop * channels {
+            return Err(ERR_ARGS);
+        }
+
+        let inv = 1.0 / channels as f32;
+        for (frame, slot) in render
+            .chunks_exact(channels)
+            .zip(inner.mono_render.iter_mut())
+        {
+            *slot = frame.iter().sum::<f32>() * inv;
+        }
+
+        let Inner {
+            aec,
+            mono_render,
+            render_scratch,
+            ..
+        } = inner;
+        // The render path wants an output buffer it may write; we discard it.
+        aec.process_render_f32(&[mono_render], &mut [render_scratch])
+            .map_err(|_| ERR_INTERNAL)?;
+        Ok(())
     }
 
     /// Enhances `input` into `output`, both interleaved and of the same length.
@@ -146,8 +214,11 @@ impl KwietDsp {
 
         let Inner {
             df,
+            aec,
             mono_in,
+            mono_aec,
             mono_out,
+            ..
         } = inner;
         let channels = self.channels as usize;
         let hop = self.hop as usize;
@@ -163,7 +234,13 @@ impl KwietDsp {
                 *slot = frame.iter().sum::<f32>() * inv_channels;
             }
 
-            let noisy = ArrayView2::from_shape((1, hop), mono_in).map_err(|_| ERR_INTERNAL)?;
+            // Echo first, then noise. If no reference has ever been fed the
+            // canceller sees silence on its render path and passes the signal
+            // through, which is the right degraded behaviour.
+            aec.process_capture_f32(&[mono_in], &mut [mono_aec])
+                .map_err(|_| ERR_INTERNAL)?;
+
+            let noisy = ArrayView2::from_shape((1, hop), mono_aec).map_err(|_| ERR_INTERNAL)?;
             let enh = ArrayViewMut2::from_shape((1, hop), mono_out).map_err(|_| ERR_INTERNAL)?;
             df.process(noisy, enh).map_err(|_| ERR_INTERNAL)?;
 
@@ -294,6 +371,54 @@ pub unsafe extern "C" fn kwiet_dsp_process(
         let dst = unsafe { std::slice::from_raw_parts_mut(output, samples) };
         // SAFETY: the caller guarantees single-threaded use of `process`.
         unsafe { engine.process(src, dst) }
+    }));
+
+    match result {
+        Ok(Ok(())) => OK,
+        Ok(Err(code)) => code,
+        Err(_) => ERR_INTERNAL,
+    }
+}
+
+/// Feeds one block of the far-end reference (what the speakers are playing) to
+/// the echo canceller.
+///
+/// `frames` must equal [`kwiet_dsp_block_frames`]; `channels` is the reference
+/// stream's own channel count and is downmixed internally. Call this from the
+/// same worker thread as [`kwiet_dsp_process`], before it, for each block.
+///
+/// Returns [`OK`], or a negative code. A failure here is not fatal: the host
+/// may keep processing capture, and the canceller simply has nothing to
+/// subtract.
+///
+/// # Safety
+///
+/// `dsp` must come from [`kwiet_dsp_create`]. `render` must point to at least
+/// `frames * channels` readable floats. Only one thread may be inside the
+/// engine at a time.
+#[no_mangle]
+pub unsafe extern "C" fn kwiet_dsp_process_render(
+    dsp: *mut KwietDsp,
+    render: *const f32,
+    frames: u32,
+    channels: u32,
+) -> i32 {
+    // SAFETY: `as_ref` turns null into None instead of dereferencing it.
+    let Some(engine) = (unsafe { dsp.as_ref() }) else {
+        return ERR_HANDLE;
+    };
+    if render.is_null() || frames != engine.hop || channels == 0 || channels > MAX_CHANNELS {
+        return ERR_ARGS;
+    }
+    let Some(samples) = (frames as usize).checked_mul(channels as usize) else {
+        return ERR_ARGS;
+    };
+
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: the caller guarantees `render` holds `samples` readable floats.
+        let src = unsafe { std::slice::from_raw_parts(render, samples) };
+        // SAFETY: the caller guarantees single-threaded use of the engine.
+        unsafe { engine.process_render(src, channels as usize) }
     }));
 
     match result {
@@ -490,6 +615,75 @@ mod tests {
             ratio < 0.5,
             "noise barely attenuated (ratio {ratio:.3}) -- is the model actually running?"
         );
+    }
+
+    /// The echo canceller has to actually cancel, through the same C ABI the
+    /// APO uses -- not just inside the crate. Far end is a tone; the near end
+    /// is that tone leaking back, delayed, plus a quiet local voice.
+    #[test]
+    fn process_should_cancel_a_delayed_echo() {
+        let dsp = engine();
+        let hop = dsp.hop as usize;
+        let channels = dsp.channels as usize;
+        const DELAY: usize = 120; // 2.5 ms of acoustic path
+        const BLOCKS: usize = 300; // 3 s, enough for the filter to converge
+
+        let mut tail = vec![0.0f32; DELAY];
+        let mut render = vec![0.0f32; hop];
+        let mut capture = vec![0.0f32; hop * channels];
+        let mut output = vec![0.0f32; hop * channels];
+        let mut phase = 0.0f32;
+        let (mut sum_in, mut sum_out) = (0.0f32, 0.0f32);
+
+        for block in 0..BLOCKS {
+            for slot in render.iter_mut() {
+                phase += 440.0 * std::f32::consts::TAU / REQUIRED_SAMPLE_RATE as f32;
+                *slot = phase.sin() * 0.5;
+            }
+            // The echo is the render signal delayed by DELAY samples.
+            for i in 0..hop {
+                let echoed = if i < DELAY {
+                    tail[i]
+                } else {
+                    render[i - DELAY]
+                } * 0.63;
+                let voice = ((block * hop + i) as f32 * 0.017).sin() * 0.02;
+                for ch in 0..channels {
+                    capture[i * channels + ch] = echoed + voice;
+                }
+            }
+            tail.copy_from_slice(&render[hop - DELAY..]);
+
+            // SAFETY: this test is single-threaded, and both buffers are sized
+            // to the block the engine was created for.
+            unsafe { dsp.process_render(&render, 1) }.expect("render should succeed");
+            // SAFETY: same.
+            unsafe { dsp.process(&capture, &mut output) }.expect("process should succeed");
+
+            if block >= BLOCKS - 50 {
+                sum_in += rms(&capture);
+                sum_out += rms(&output);
+            }
+        }
+
+        let db = |x: f32| 20.0 * x.max(1e-12).log10();
+        let cancelled = db(sum_in / 50.0) - db(sum_out / 50.0);
+        println!("echo cancelled: {cancelled:.1} dB");
+        assert!(
+            cancelled > 10.0,
+            "echo barely cancelled ({cancelled:.1} dB) -- is AEC3 actually wired in?"
+        );
+    }
+
+    #[test]
+    fn process_render_should_reject_a_wrong_block_size() {
+        let dsp = Box::into_raw(Box::new(engine()));
+        let buf = vec![0.0f32; 64];
+        // SAFETY: valid engine; the frame count deliberately is not the hop.
+        let rc = unsafe { kwiet_dsp_process_render(dsp, buf.as_ptr(), 64, 1) };
+        assert_eq!(rc, ERR_ARGS);
+        // SAFETY: created just above, destroyed once.
+        unsafe { kwiet_dsp_destroy(dsp) };
     }
 
     /// The whole architecture rests on the worker keeping up: it has one

@@ -1167,6 +1167,69 @@ honorer pour de bon. La perspective réaliste : **Kwiet dans Chrome exigerait
 d'implémenter réellement l'annulation d'écho**, ce qui était précisément le
 chantier écarté au §11bis.
 
+## 16. ✅ Annulation d'écho intégrée — AEC3 en Rust pur (2026-08-04)
+
+Décision inversée, sur mesure et non sur argument. Le §11bis écartait
+l'annulation d'écho parce qu'on n'aurait livré que du SpeexDSP médiocre face à
+AEC3. Le paysage a changé : [`sonora`](https://github.com/dignifiedquire/sonora)
+est **AEC3 lui-même, porté en Rust pur**, BSD-3-Clause.
+
+| | |
+|---|---|
+| Compilation MSVC | 11 s, aucune adaptation, aucune dépendance C++ |
+| Validation amont | 2400+ tests de la suite de référence WebRTC |
+| Coût mesuré ici | **72 µs** par trame de 10 ms — RTF 0,0072 |
+| Annulation mesurée | **74,3 dB** via notre propre ABI C (écho à −4 dB, retard 2,5 ms) |
+| RTF total avec DFN3 | **0,027** — inchangé en pratique |
+
+### Chaîne
+
+```
+AcceptInput (RT)  →  anneau SPSC mono  →  worker
+                                            ├─ AEC3      (écho, corrélé)
+                                            └─ DFN3      (bruit, non corrélé)
+```
+
+L'ordre n'est pas indifférent : l'écho est une copie corrélée d'un signal qu'on
+nous donne, qu'un filtre adaptatif retire proprement. Le laisser au débruiteur
+reviendrait à lui demander d'effacer de la parole.
+
+Quand la référence manque — rien ne joue, ou pas d'entrée auxiliaire câblée — le
+worker nourrit le canceller de silence plutôt que de sauter le bloc, pour que sa
+notion du temps reste alignée sur la capture.
+
+### Conséquence sur le contrat
+
+`IApoAcousticEchoCancellation` est **désormais déclarée**, et honorée. Elle avait
+été délibérément retenue tant que l'annulation n'existait pas : un APO qui
+réclame ce marqueur fait couper aux applications leur propre annuleur.
+
+Validé en non-régression : capture normale, `refFrames=175680` (3,7 s de
+référence réellement reçue), 0 décrochage, 0 erreur.
+
+### Ce que ça ne débloque pas
+
+Chrome. Testé avec l'AEC réelle et le flag `EnforceSystemEchoCancellation` :
+rejet identique, verrouillages de 2 à 4 ms. L'hypothèse « on ment sur l'AEC »
+est donc écartée — Windows ne peut de toute façon pas mesurer la qualité d'une
+annulation en 3 ms.
+
+Écartée aussi, par expérience dédiée : **la latence annoncée**. Reporter zéro
+hns au lieu de 300000 n'a rien changé sur 28 verrouillages.
+
+Restent, non testées : le format (on verrouille en `2->2 ch` quand Chrome
+demande du mono, et `IAudioProcessingObjectPreferredFormatSupport` n'est
+toujours pas implémentée), et `{69E1F79F-6EAE-4517-BE9F-13AA90E30014}`,
+réclamée 221 fois, refusée 221 fois, absente du registre, du SDK et du web.
+
+### Confirmation par l'usage
+
+Le propriétaire de la machine, sans instrumentation : dans WhatsApp — application
+Windows **native** depuis sa réécriture — un bébé qui hurle derrière lui est
+inaudible pour son interlocuteur ; dans Meet, tout passe. Même casque, même
+micro, même instant. C'est la meilleure démonstration de la session, et elle
+établit aussi que **Voice Clarity ne fonctionne pas davantage dans Chrome**.
+
 ## 8. Questions ouvertes
 
 - **`APOInitSystemEffects3`** (Win11 22H2+) : layout différent de SE2 — le

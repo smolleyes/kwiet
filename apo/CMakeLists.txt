@@ -17,6 +17,11 @@ option(KWIET_DEV_LOG "Enable Kwiet dev diagnostics logging" OFF)
 # not keep -- nothing is cancelled. Never enable in a distributed build.
 option(KWIET_EXPERIMENT_AEC "Advertise acoustic echo cancellation (experiment)" OFF)
 
+# Reports zero algorithmic delay while the pipeline still has it. Diagnostic
+# only: it exists to find out whether the communications pipe rejects the APO
+# on the declared latency. Never enable in a distributed build.
+option(KWIET_EXPERIMENT_LOW_LATENCY "Report zero latency (experiment)" OFF)
+
 add_library(kwiet_apo SHARED
     src/ChannelMix.h
     src/ControlShm.cpp
@@ -46,6 +51,10 @@ endif()
 
 if(KWIET_EXPERIMENT_AEC)
     target_compile_definitions(kwiet_apo PRIVATE KWIET_EXPERIMENT_AEC)
+endif()
+
+if(KWIET_EXPERIMENT_LOW_LATENCY)
+    target_compile_definitions(kwiet_apo PRIVATE KWIET_EXPERIMENT_LOW_LATENCY)
 endif()
 
 set_target_properties(kwiet_apo PROPERTIES

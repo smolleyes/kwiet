@@ -23,6 +23,11 @@ hound = "3.5"
 deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet", default-features = false, features = ["tract", "default-model"] }
 ndarray = "0.15"
 
+# WebRTC's AEC3, ported to pure Rust (BSD-3-Clause). Echo is a correlated copy
+# of a signal we are handed, so an adaptive filter removes it; asking the
+# denoiser to do it would mean asking it to erase speech.
+sonora = "0.2"
+
 # Épinglage de la famille tract. deep_filter déclare "^0.21.4", mais tract a
 # renommé un champ public (`symbol_table` -> `symbols`) dans une version que
 # cargo considère compatible : résolu en 0.21.17, deep_filter ne compile plus.

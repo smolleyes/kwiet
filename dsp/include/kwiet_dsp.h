@@ -13,7 +13,9 @@ extern "C" {
 
 // v2: DeepFilterNet3 replaced the placeholder gain. This changed the meaning
 // of kwiet_dsp_set_attenuation_db and added kwiet_dsp_block_frames.
-#define KWIET_DSP_ABI_VERSION 2u
+// v3: acoustic echo cancellation ahead of the denoiser, and with it
+// kwiet_dsp_process_render for the loopback reference.
+#define KWIET_DSP_ABI_VERSION 3u
 
 // Return codes of kwiet_dsp_process. Anything < 0 makes the host fail open
 // (passthrough) for that block.
@@ -49,6 +51,15 @@ uint32_t kwiet_dsp_block_frames(const KwietDsp* dsp);
 // NOTE: runs on the host's worker thread, never on the audio thread, so it is
 // allowed to allocate (tract does, per inference).
 int32_t kwiet_dsp_process(KwietDsp* dsp, const float* in, float* out, uint32_t frames);
+
+// Feeds one block of the far-end reference -- what the speakers are playing --
+// to the echo canceller. `frames` must equal kwiet_dsp_block_frames(); the
+// reference's own channel count is downmixed internally.
+// Call from the same worker thread as kwiet_dsp_process, before it, for each
+// block. Skipping it is not fatal: the canceller then has nothing to subtract
+// and the signal passes through it untouched.
+int32_t kwiet_dsp_process_render(KwietDsp* dsp, const float* render, uint32_t frames,
+                                 uint32_t channels);
 
 // Sets the MAXIMUM NOISE ATTENUATION in dB: 0 leaves the signal untouched,
 // 100 lets DeepFilterNet suppress as much as it wants. Aggressiveness control,

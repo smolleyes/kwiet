@@ -137,33 +137,17 @@ HRESULT KwietApo::Inner::QueryInterface(REFIID riid, void** ppvObject)
     } else if (riid == __uuidof(IApoAuxiliaryInputRT)) {
         KWIET_LOG("QI ok: IApoAuxiliaryInputRT");
         *ppvObject = static_cast<IApoAuxiliaryInputRT*>(&o);
-#if defined(KWIET_EXPERIMENT_AEC)
     } else if (riid == __uuidof(IApoAcousticEchoCancellation)) {
-        // EXPERIMENT ONLY -- never in a shipped build. See docs/architecture.md
-        // §15. Advertising this is what gets Chromium's communications pipe to
-        // accept us at all (111 initialisations, 110 successful locks, 55
-        // AddAuxiliaryInput), but the engine then unlocks within milliseconds
-        // because we advertise an echo canceller and cancel nothing.
-        KWIET_LOG("QI ok: IApoAcousticEchoCancellation [EXPERIMENT]");
+        // Advertised, and honoured: the reference stream reaches WebRTC's AEC3
+        // in the DSP worker, ahead of the denoiser. See docs/architecture.md
+        // §15 and §16.
+        //
+        // This was deliberately withheld until the cancellation was real. An
+        // APO that claims this marker makes applications switch their own
+        // canceller off and rely on ours; claiming it while cancelling nothing
+        // would put everyone on speakers into echo.
+        KWIET_LOG("QI ok: IApoAcousticEchoCancellation");
         *ppvObject = static_cast<IApoAcousticEchoCancellation*>(&o);
-#endif
-        // IApoAcousticEchoCancellation is deliberately NOT offered, and this is
-        // now settled by measurement rather than by argument.
-        //
-        // Advertising it was tested on 2026-08-04 precisely to find out whether
-        // it would bring Chrome into the effects chain. It does not: with the
-        // marker offered and the log confirming "QI ok", Chrome still never
-        // instantiated this APO -- neither for a Meet call nor for a page
-        // requesting the microphone with its own processing switched off. A
-        // normal WASAPI capture, in the same minute, locked and processed
-        // normally.
-        //
-        // So there is nothing to gain and something to lose: a native
-        // application that does use the communications pipe would switch its
-        // own canceller off and expect ours, and we cancel nothing --
-        // AcceptInput only counts the reference frames. The auxiliary-input
-        // interfaces stay: the reference stream costs nothing and is useful for
-        // diagnostics.
     } else {
 #if defined(KWIET_DEV_LOG)
         char g[40];
@@ -439,6 +423,14 @@ HRESULT KwietApo::LockForProcess(UINT32 u32NumInputConnections,
             m_latencyHns = static_cast<HNSTIME>(m_dsp.LatencyFrames()) * 10000000
                            / static_cast<HNSTIME>(m_sampleRate);
         }
+#if defined(KWIET_EXPERIMENT_LOW_LATENCY)
+        // DIAGNOSTIC ONLY. Reports a latency the pipeline does not actually
+        // have, to find out whether the communications pipe rejects us on the
+        // declared figure. It does not change the real delay: timestamps
+        // downstream would be wrong by the difference. Never ship this.
+        m_latencyHns = 0;
+        KWIET_LOG("LockForProcess: [EXPERIMENT] reporting zero latency");
+#endif
     } else {
         KWIET_LOG("LockForProcess: DSP unavailable, staying in passthrough");
     }
@@ -743,14 +735,17 @@ HRESULT KwietApo::IsInputFormatSupported(IAudioMediaType* pRequestedInputFormat,
 void KwietApo::AcceptInput(DWORD dwInputId, const APO_CONNECTION_PROPERTY* pInputConnection)
 {
     // REAL-TIME PATH, same rules as APOProcess.
-    // MILESTONE: the reference is only counted, so the log can show it really
-    // arrives. Cancelling it needs an AEC in the DSP worker -- until then this
-    // APO must NOT ship, because presenting IApoAcousticEchoCancellation makes
-    // Chrome switch its own echo canceller off.
+    //
+    // This is the loopback of what the machine is playing. It goes straight to
+    // the echo canceller's render path, through a ring, exactly like the
+    // capture side: nothing is processed on this thread.
     if (pInputConnection == nullptr || dwInputId != m_auxInputId) {
         return;
     }
-    if (pInputConnection->u32BufferFlags == BUFFER_VALID) {
-        m_auxFrames.fetch_add(pInputConnection->u32ValidFrameCount, std::memory_order_relaxed);
+    if (pInputConnection->u32BufferFlags != BUFFER_VALID) {
+        return;
     }
+    m_auxFrames.fetch_add(pInputConnection->u32ValidFrameCount, std::memory_order_relaxed);
+    m_dsp.PushRenderRt(reinterpret_cast<const float*>(pInputConnection->pBuffer),
+                       pInputConnection->u32ValidFrameCount, m_auxChannels);
 }

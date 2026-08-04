@@ -92,11 +92,14 @@ bool DspHost::LoadLibraryFromModuleDir()
         reinterpret_cast<void*>(GetProcAddress(m_dspModule, "kwiet_dsp_block_frames")));
     m_process = reinterpret_cast<ProcessFn>(
         reinterpret_cast<void*>(GetProcAddress(m_dspModule, "kwiet_dsp_process")));
+    m_processRender = reinterpret_cast<ProcessRenderFn>(
+        reinterpret_cast<void*>(GetProcAddress(m_dspModule, "kwiet_dsp_process_render")));
     m_setAttenuation = reinterpret_cast<SetAttenuationFn>(
         reinterpret_cast<void*>(GetProcAddress(m_dspModule, "kwiet_dsp_set_attenuation_db")));
 
     if (m_abiVersion == nullptr || m_create == nullptr || m_destroy == nullptr
-        || m_blockFramesFn == nullptr || m_process == nullptr || m_setAttenuation == nullptr) {
+        || m_blockFramesFn == nullptr || m_process == nullptr || m_processRender == nullptr
+        || m_setAttenuation == nullptr) {
         KWIET_LOG("DspHost: missing export in kwiet_dsp.dll");
         return false;
     }
@@ -160,13 +163,24 @@ bool DspHost::Start(UINT32 sampleRate, UINT32 inChannels, UINT32 outChannels,
         Stop();
         return false;
     }
+    // Mono, so the same span of audio costs `channels` times less. Kept short
+    // on purpose: a stale reference is worse than none, since the canceller
+    // would subtract something that is no longer there.
+    if (!m_renderRing.Init(ringSamples / channels)) {
+        KWIET_LOG("DspHost: render ring allocation failed");
+        Stop();
+        return false;
+    }
 
     m_scratchIn = static_cast<float*>(calloc(m_blockSamples, sizeof(float)));
     m_scratchOut = static_cast<float*>(calloc(m_blockSamples, sizeof(float)));
+    m_renderScratch = static_cast<float*>(calloc(m_blockFrames, sizeof(float)));
+    m_renderMix = static_cast<float*>(calloc(framesPerQuantum, sizeof(float)));
     // Sized on the quantum, not the block: this is what the RT thread pops.
     m_rtScratch = static_cast<float*>(
         calloc(static_cast<size_t>(framesPerQuantum) * channels, sizeof(float)));
-    if (m_scratchIn == nullptr || m_scratchOut == nullptr || m_rtScratch == nullptr) {
+    if (m_scratchIn == nullptr || m_scratchOut == nullptr || m_rtScratch == nullptr
+        || m_renderScratch == nullptr || m_renderMix == nullptr) {
         KWIET_LOG("DspHost: scratch allocation failed");
         Stop();
         return false;
@@ -254,6 +268,7 @@ void DspHost::Stop()
 
     m_inRing.Free();
     m_outRing.Free();
+    m_renderRing.Free();
 
     free(m_scratchIn);
     m_scratchIn = nullptr;
@@ -261,6 +276,10 @@ void DspHost::Stop()
     m_scratchOut = nullptr;
     free(m_rtScratch);
     m_rtScratch = nullptr;
+    free(m_renderScratch);
+    m_renderScratch = nullptr;
+    free(m_renderMix);
+    m_renderMix = nullptr;
 
     if (m_dspModule != nullptr) {
         FreeLibrary(m_dspModule);
@@ -271,6 +290,7 @@ void DspHost::Stop()
     m_destroy = nullptr;
     m_blockFramesFn = nullptr;
     m_process = nullptr;
+    m_processRender = nullptr;
     m_setAttenuation = nullptr;
 
     m_control = nullptr;
@@ -330,6 +350,34 @@ bool DspHost::ProcessRt(const float* in, float* out, UINT32 frames)
     return true;
 }
 
+void DspHost::PushRenderRt(const float* in, UINT32 frames, UINT32 channels)
+{
+    // REAL-TIME PATH. No allocation, no lock, no syscall, no logging.
+    if (!m_active.load(std::memory_order_acquire)) {
+        return;
+    }
+    if (in == nullptr || frames == 0 || channels == 0 || frames > m_quantumFrames) {
+        return;
+    }
+
+    // Downmix here rather than in the DSP: the ring then carries a single
+    // channel instead of however many the render endpoint happens to have.
+    const float inv = 1.0f / static_cast<float>(channels);
+    for (UINT32 frame = 0; frame < frames; ++frame) {
+        float sum = 0.0f;
+        for (UINT32 ch = 0; ch < channels; ++ch) {
+            sum += in[static_cast<size_t>(frame) * channels + ch];
+        }
+        m_renderMix[frame] = sum * inv;
+    }
+
+    // A full ring means the worker is behind on the reference. Dropping the
+    // oldest would be better than dropping the newest, but neither is worth a
+    // branch here: the canceller re-converges, and it is never fed silence
+    // where audio existed -- only less history.
+    (void)m_renderRing.Push(m_renderMix, frames);
+}
+
 DWORD WINAPI DspHost::WorkerThunk(LPVOID param)
 {
     static_cast<DspHost*>(param)->WorkerLoop();
@@ -380,6 +428,15 @@ void DspHost::WorkerLoop()
             if (bypass) {
                 memcpy(m_scratchOut, m_scratchIn, m_blockSamples * sizeof(float));
             } else {
+                // The canceller wants one render block per capture block. When
+                // the reference is late or absent -- no aux input wired, or the
+                // speakers are silent -- feed it silence rather than skip, so
+                // its notion of time stays aligned with the capture path.
+                if (!m_renderRing.Pop(m_renderScratch, m_blockFrames)) {
+                    memset(m_renderScratch, 0, m_blockFrames * sizeof(float));
+                }
+                m_processRender(m_engine, m_renderScratch, m_blockFrames, 1);
+
                 const int32_t rc = m_process(m_engine, m_scratchIn, m_scratchOut, m_blockFrames);
                 if (rc != KWIET_DSP_OK) {
                     // Latch the failure and fall back to passing audio through

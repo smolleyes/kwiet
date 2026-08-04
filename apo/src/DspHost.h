@@ -57,6 +57,14 @@ public:
     // must fail open and copy input to output itself.
     bool ProcessRt(const float* in, float* out, UINT32 frames);
 
+    // RT-SAFE. Hands the echo canceller the far-end reference -- what the
+    // speakers are playing -- as delivered by IApoAuxiliaryInputRT::AcceptInput.
+    // Downmixed to mono here, because that is what the canceller wants and
+    // doing it on this side keeps the ring narrow.
+    // Dropping a block is harmless: the canceller is fed silence for that slot
+    // and simply has less to subtract, which is why this returns nothing.
+    void PushRenderRt(const float* in, UINT32 frames, UINT32 channels);
+
     // Control plane; safe from any thread at any time.
     void SetEnabled(bool enabled)
     {
@@ -76,6 +84,7 @@ private:
     using DestroyFn = decltype(&kwiet_dsp_destroy);
     using BlockFramesFn = decltype(&kwiet_dsp_block_frames);
     using ProcessFn = decltype(&kwiet_dsp_process);
+    using ProcessRenderFn = decltype(&kwiet_dsp_process_render);
     using SetAttenuationFn = decltype(&kwiet_dsp_set_attenuation_db);
 
     static DWORD WINAPI WorkerThunk(LPVOID param);
@@ -88,15 +97,21 @@ private:
     DestroyFn m_destroy = nullptr;
     BlockFramesFn m_blockFramesFn = nullptr;
     ProcessFn m_process = nullptr;
+    ProcessRenderFn m_processRender = nullptr;
     SetAttenuationFn m_setAttenuation = nullptr;
 
     KwietDsp* m_engine = nullptr;
 
     SpscRing m_inRing;
     SpscRing m_outRing;
+    // Mono, and its own producer: the reference arrives on AcceptInput, which
+    // is a different callback from APOProcess.
+    SpscRing m_renderRing;
 
     float* m_scratchIn = nullptr;
     float* m_scratchOut = nullptr;
+    float* m_renderScratch = nullptr;   // one block, mono, worker side
+    float* m_renderMix = nullptr;       // one quantum, mono, RT side
     // RT-side staging, used only when the channel counts differ: the ring
     // holds input-width frames that have to be mixed into a narrower output.
     float* m_rtScratch = nullptr;
