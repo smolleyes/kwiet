@@ -1,15 +1,15 @@
-# Publie une release à partir d'un tag `vX.Y.Z`.
+# Publish a release from a `vX.Y.Z` tag.
 #
-# Le tag est la source de vérité pour la version : elle est réécrite dans
-# tauri.conf.json et passée au pack d'effets, de sorte qu'un installeur ne peut
-# pas annoncer une version différente de celle qu'il pose dans le magasin de
-# pilotes.
+# The tag is the source of truth for the version: it is written into
+# tauri.conf.json and passed to the effect pack, so an installer cannot announce
+# a version different from the one it puts in the driver store.
 #
-# Signature : si les secrets sont présents, la DLL et le catalogue sont signés.
-# Sinon la release part quand même, mais ses notes disent franchement que le
-# paquet n'est pas signé -- Windows refusera d'enregistrer un package pilote
-# dont le catalogue ne remonte pas à une autorité de confiance, et il vaut mieux
-# l'écrire que laisser quelqu'un le découvrir en l'installant.
+# Signing: when the secrets are present, the DLLs and the catalogue are signed
+# and the installer trusts the signing certificate on the target machine.
+# Without them the release still goes out, but its notes say plainly that the
+# package is unsigned -- Windows refuses a driver package whose catalogue does
+# not chain to a trusted root, and it is better written down than discovered by
+# installing.
 
 name: Release
 
@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version x.y.z (sans le v)"
+        description: "Version x.y.z (without the v)"
         required: true
 
 permissions:
@@ -32,9 +32,9 @@ jobs:
   release:
     runs-on: windows-latest
 
-    # Hissé au niveau du job : une condition `if:` ne voit pas un `env:` déclaré
-    # dans l'étape qu'elle garde, et la mienne était donc toujours fausse --
-    # l'étape de signature aurait été sautée même avec les secrets en place.
+    # Hoisted to job level: an `if:` condition cannot see an `env:` declared on
+    # the step it guards, so the guard below was always false and the signing
+    # step would have been skipped even with the secrets in place.
     env:
       SIGNING_PFX: ${{ secrets.SIGNING_PFX }}
       SIGNING_PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
@@ -42,7 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Version depuis le tag
+      - name: Version from the tag
         id: version
         shell: pwsh
         run: |
@@ -52,10 +52,10 @@ jobs:
             '${{ github.ref_name }}' -replace '^v', ''
           }
           if ($version -notmatch '^\d+\.\d+\.\d+$') {
-            throw "Version attendue sous la forme x.y.z, reçu : $version"
+            throw "Expected a version of the form x.y.z, got: $version"
           }
           "version=$version" >> $env:GITHUB_OUTPUT
-          "Version : $version"
+          "Version: $version"
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -80,7 +80,7 @@ jobs:
           cargo test --release --locked
           cargo build --release
 
-      - name: Aligner la version sur le tag
+      - name: Align the version with the tag
         shell: pwsh
         run: |
           $version = '${{ steps.version.outputs.version }}'
@@ -88,18 +88,17 @@ jobs:
           $json = Get-Content $conf -Raw
           $json = $json -replace '"version": "[^"]*"', ('"version": "{0}"' -f $version)
           Set-Content $conf $json -Encoding utf8 -NoNewline
-          # Uniquement dans [package]. Cargo.toml porte d'autres lignes
-          # `version = "..."` en début de ligne -- celle de [dependencies.windows]
-          # notamment -- et un remplacement global y écrivait la version de
-          # Kwiet, après quoi la compilation échouait sur « failed to select a
-          # version for windows ».
+          # The [package] table only. Cargo.toml carries other lines starting
+          # with `version = "..."` -- the one under [dependencies.windows] among
+          # them -- and a global replace wrote Kwiet's version there, after which
+          # the build failed on "failed to select a version for windows".
           $cargo = 'ui/src-tauri/Cargo.toml'
           $text = Get-Content $cargo -Raw
           $re = [regex]::new('(?ms)(^\[package\].*?^version\s*=\s*)"[^"]*"')
           $text = $re.Replace($text, ('${1}"' + $version + '"'), 1)
           Set-Content $cargo $text -Encoding utf8 -NoNewline
 
-      - name: Certificat de signature
+      - name: Signing certificate
         id: cert
         if: env.SIGNING_PFX != ''
         shell: pwsh
@@ -109,12 +108,12 @@ jobs:
           [IO.File]::WriteAllBytes($path, $bytes)
           "path=$path" >> $env:GITHUB_OUTPUT
 
-      - name: Pack d'effets
+      - name: Effect pack
         shell: pwsh
         run: |
-          # Table de hachage, pas tableau : le splatting d'un tableau passe les
-          # éléments POSITIONNELLEMENT, si bien que -Version arrivait comme
-          # valeur de $Version et la version comme valeur de $CertPath.
+          # Hashtable, not array: splatting an array passes its elements
+          # POSITIONALLY, so -Version arrived as the value of $Version and the
+          # version itself as the value of $CertPath.
           $packArgs = @{ Version = '${{ steps.version.outputs.version }}' }
           if ('${{ steps.cert.outputs.path }}') {
             $packArgs.CertPath = '${{ steps.cert.outputs.path }}'
@@ -122,13 +121,13 @@ jobs:
           }
           ./installer/effectpack/build-package.ps1 @packArgs
 
-      - name: Installeur
+      - name: Installer
         working-directory: ui
         run: |
           npm ci
           npm run tauri build
 
-      - name: Empreintes
+      - name: Checksums
         shell: pwsh
         run: |
           $dir = 'ui/src-tauri/target/release/bundle/msi'
@@ -138,7 +137,7 @@ jobs:
           } | Set-Content "$dir/SHA256SUMS.txt" -Encoding ascii
           Get-Content "$dir/SHA256SUMS.txt"
 
-      - name: Publier la release
+      - name: Publish the release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -147,28 +146,40 @@ jobs:
           $dir = 'ui/src-tauri/target/release/bundle/msi'
           $signed = '${{ steps.cert.outputs.path }}' -ne ''
           $notes = @"
-          ## Installation
+          ## Install
 
-          1. Téléchargez le MSI correspondant à votre langue —
-             ``Kwiet_${version}_x64_fr-FR.msi`` ou ``Kwiet_${version}_x64_en-US.msi``
-             — et lancez-le.
-          2. **Choisissez Kwiet** dans Paramètres → Son → votre micro →
-             Améliorations audio. Sans cette étape, Kwiet est installé et inerte :
-             le panneau vous le dira.
+          1. Download the MSI for your language — ``Kwiet_${version}_x64_en-US.msi``
+             or ``Kwiet_${version}_x64_fr-FR.msi`` — and run it.
+          2. **Choose Kwiet** in Settings → Sound → your microphone → Audio
+             enhancements. Until you do, Kwiet is installed and inert: the panel
+             will tell you so, with a button to open the right page.
 
-          Windows 11 24H2 ou plus récent, x64, micro à 48 kHz.
+          Windows 11 24H2 or newer, x64, microphone at 48 kHz.
           "@
-          if (-not $signed) {
+          if ($signed) {
+            $notes += @"
+
+          ### About the signature
+
+          The effect pack is a driver package, and Windows only registers one
+          whose catalogue chains to a trusted root. Kwiet is signed with its own
+          self-signed key, so the installer adds that **public certificate** to
+          the machine's Trusted Root and Trusted Publishers stores before
+          registering the pack, and removes it again when you uninstall.
+
+          The certificate carries the Code Signing usage and nothing else, so it
+          cannot vouch for TLS certificates. The private key never ships. Even
+          so, it is a real grant of trust — a commercial code-signing
+          certificate, which chains to a root already present everywhere and
+          needs nothing added, is the cleaner answer and is on the list.
+          "@
+          } else {
             $notes += @"
 
           > [!WARNING]
-          > **Paquet non signé.** Windows refusera d'enregistrer le pack
-          > d'effets : l'application s'installera, le micro ne sera pas traité,
-          > et le panneau affichera « Pack d'effets absent ».
-          >
-          > Il faut pour cela un certificat de signature de code commercial —
-          > pas une signature attestation, qui ne concerne que les pilotes
-          > noyau. Voir le README.
+          > **Unsigned package.** Windows will refuse to register the effect
+          > pack: the app installs, the microphone is not processed, and the
+          > panel shows "Effect pack missing".
           "@
           }
           $assets = @(Get-ChildItem "$dir/*.msi" | ForEach-Object { $_.FullName })

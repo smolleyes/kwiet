@@ -1,10 +1,9 @@
 # Build everything Kwiet is made of, on every push.
 #
-# The three halves of the product are built by three different toolchains, and
-# they only ever meet inside the installer -- so the installer is built here
-# too, even though CI cannot sign it. An unsigned bundle still proves that the
-# effect pack was assembled and embedded correctly, which is the part that
-# silently breaks.
+# The three halves of the product are built by three different toolchains and
+# only ever meet inside the installer -- so the installer is built here too,
+# even though CI cannot sign it. An unsigned bundle still proves the effect pack
+# was assembled and embedded correctly, which is the part that breaks silently.
 
 name: CI
 
@@ -14,8 +13,8 @@ on:
   pull_request:
   workflow_dispatch:
 
-# A cold build compiles tract from source and takes a quarter of an hour. There
-# is no point spending that on a commit that a newer push has already replaced.
+# A cold build compiles tract from source and takes a quarter of an hour. No
+# point spending that on a commit a newer push has already replaced.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -47,10 +46,10 @@ jobs:
           cache-dependency-path: ui/package-lock.json
 
       # The logo and icons are committed, but they are generated: this catches a
-      # hand-edited SVG that the generator would overwrite on the next run.
+      # hand-edited SVG that the generator would overwrite on its next run.
       # Rasters need ImageMagick, which the runner does not have; the generator
       # stops after the SVGs on its own.
-      - name: Les assets générés sont à jour
+      - name: Generated assets are up to date
         run: |
           node assets/build-assets.mjs
           git diff --exit-code -- assets/svg ui/src/mark.svg
@@ -70,26 +69,26 @@ jobs:
           # the cdylib the effect pack ships is only emitted by `cargo build`.
           cargo build --release --locked
 
-      # Before the panel, not after: tauri-build resolves the bundle resources
-      # from build.rs, so *any* cargo command on ui/src-tauri fails outright
-      # while the pack directory is missing -- clippy and tests included.
-      # That strictness is worth keeping: it makes an installer without its
-      # effect pack impossible to build by accident.
+      # Before the panel, not after: tauri-build resolves bundle resources from
+      # build.rs, so *any* cargo command on ui/src-tauri fails outright while the
+      # pack directory is missing -- clippy and tests included. That strictness
+      # is worth keeping: it makes an installer without its effect pack
+      # impossible to build by accident.
       #
       # Unsigned here. Windows will refuse to install it, which is fine: what
       # this proves is that the package assembles and Tauri finds it to embed.
-      - name: Pack d'effets (non signé)
+      - name: Effect pack (unsigned)
         run: ./installer/effectpack/build-package.ps1
         shell: pwsh
 
-      - name: Panneau (Rust)
+      - name: Panel (Rust)
         working-directory: ui/src-tauri
         run: |
           cargo fmt --all --check
           cargo clippy --all-targets --locked -- -D warnings
           cargo test --locked
 
-      - name: Installeur
+      - name: Installer
         working-directory: ui
         run: |
           npm ci

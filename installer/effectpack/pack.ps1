@@ -76,6 +76,56 @@ function Get-KwietPublishedDriver {
     }
 }
 
+<#
+    Fait confiance à la clé qui a signé ce pack.
+
+    Windows n'installe un package pilote que si son catalogue remonte à une
+    racine de confiance. Notre catalogue est auto-signé : sans ajouter son
+    certificat, pnputil refuse — c'est exactement ce que fait un paquet non
+    signé, et le panneau affiche « Pack d'effets absent ».
+
+    Ce qui est ajouté est le certificat PUBLIC uniquement ; la clé privée reste
+    du côté de la construction et n'a jamais été distribuée. Le certificat porte
+    l'EKU Code Signing et rien d'autre, donc il ne peut valider que des chaînes
+    de signature de code — pas de certificat TLS, pas d'interception.
+
+    Cela reste un compromis assumé : cette clé pourra signer du code que cette
+    machine tiendra pour digne de confiance. La désinstallation la retire.
+#>
+function Install-SigningCertificate {
+    $certPath = Join-Path $PackageDir 'kwiet-signing.cer'
+    if (-not (Test-Path $certPath)) {
+        Write-Step 'Aucun certificat livre avec le pack (build non signee)'
+        return
+    }
+    $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($certPath)
+    foreach ($storeName in 'Root', 'TrustedPublisher') {
+        $store = [System.Security.Cryptography.X509Certificates.X509Store]::new($storeName, 'LocalMachine')
+        $store.Open('ReadWrite')
+        $store.Add($cert)
+        $store.Close()
+    }
+    Write-Step "Certificat de signature approuve ($($cert.Subject), $($cert.Thumbprint))"
+    $cert.Dispose()
+}
+
+function Uninstall-SigningCertificate {
+    $certPath = Join-Path $PackageDir 'kwiet-signing.cer'
+    if (-not (Test-Path $certPath)) { return }
+    $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($certPath)
+    foreach ($storeName in 'Root', 'TrustedPublisher') {
+        $store = [System.Security.Cryptography.X509Certificates.X509Store]::new($storeName, 'LocalMachine')
+        $store.Open('ReadWrite')
+        # Par empreinte : ne retirer que la clé que nous avons posée.
+        foreach ($found in @($store.Certificates | Where-Object { $_.Thumbprint -eq $cert.Thumbprint })) {
+            $store.Remove($found)
+        }
+        $store.Close()
+    }
+    Write-Step "Certificat de signature retire ($($cert.Thumbprint))"
+    $cert.Dispose()
+}
+
 function Restart-AudioStack {
     # Le pack apparaît comme une arrivée de périphérique, mais la pile audio ne
     # relit ses effets qu'au redémarrage du service. Coupure de son de l'ordre
@@ -96,6 +146,7 @@ function Install-Pack {
         $path = Join-Path $PackageDir $inf
         if (-not (Test-Path $path)) { throw "INF introuvable : $path" }
     }
+    Install-SigningCertificate
     # Le composant d'abord : l'extension crée le périphérique qui le réclame.
     foreach ($inf in $INF_NAMES) {
         $path = Join-Path $PackageDir $inf
@@ -115,6 +166,7 @@ function Uninstall-Pack {
     $published = @(Get-KwietPublishedDriver)
     if ($published.Count -eq 0) {
         Write-Step 'Aucun package Kwiet dans le magasin de pilotes, rien a retirer'
+        Uninstall-SigningCertificate
         return
     }
     foreach ($name in $published) {
@@ -126,6 +178,9 @@ function Uninstall-Pack {
         }
     }
     Restart-AudioStack
+    # Après les paquets : tant qu'un paquet signé par cette clé est dans le
+    # magasin de pilotes, retirer sa racine n'aurait aucun sens.
+    Uninstall-SigningCertificate
     $left = @(Get-KwietPublishedDriver)
     if ($left.Count -gt 0) {
         Write-Step "Restent apres retrait : $($left -join ', ')"

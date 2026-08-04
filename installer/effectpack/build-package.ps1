@@ -173,4 +173,17 @@ Remove-Item $cdf -Force
 if ($LASTEXITCODE -ne 0) { throw "signtool a echoue sur le catalogue ($LASTEXITCODE)" }
 
 Write-Host '-> Catalogue genere et signe'
+
+# Le certificat PUBLIC voyage avec le pack ; la clé privée, jamais. pack.ps1
+# l'installe dans les magasins de confiance avant d'appeler pnputil, sans quoi
+# Windows refuse un catalogue auto-signé. Extrait du PFX plutôt que maintenu à
+# côté : impossible qu'il désigne une autre clé que celle qui vient de signer.
+$publicCert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+    $CertPath, $CertPassword)
+[IO.File]::WriteAllBytes(
+    (Join-Path $OutDir 'kwiet-signing.cer'),
+    $publicCert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
+Write-Host "-> Certificat public exporte (empreinte $($publicCert.Thumbprint))"
+$publicCert.Dispose()
+
 Write-Host '=== Pack assemble et signe ==='
