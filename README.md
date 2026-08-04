@@ -2,196 +2,157 @@
 
 <img src="assets/svg/lockup.svg" alt="Kwiet" width="360">
 
-**Votre micro, nettoyé par IA, dans toutes vos applications.**
-Pas de micro virtuel. Pas de périphérique à changer. Un interrupteur.
+**AI microphone cleanup, in every app you already use.**
+No virtual microphone. No device to switch. One toggle.
 
 [![CI](https://github.com/smolleyes/kwiet/actions/workflows/ci.yml/badge.svg)](https://github.com/smolleyes/kwiet/actions/workflows/ci.yml)
 [![Licence](https://img.shields.io/badge/licence-Apache--2.0-9FD3C0)](LICENSE)
-[![Windows 11](https://img.shields.io/badge/Windows-11-0D1417)](#prérequis)
+[![Windows 11](https://img.shields.io/badge/Windows-11-0D1417)](#requirements)
 
-[English](README.en.md) · [Architecture](docs/architecture.md)
+[Français](README.fr.md) · [Architecture](docs/architecture.md) *(French)*
 
 </div>
 
 ---
 
-## Le problème
+## The problem
 
-Les outils de suppression de bruit installent un **micro virtuel**. Il faut donc
-aller le sélectionner dans Teams, dans Discord, dans Meet, dans chaque
-application — et recommencer chaque fois qu'une mise à jour remet le
-périphérique par défaut. Quand ça tourne mal, l'application capte le mauvais
-micro et personne ne vous entend.
+Noise-suppression tools install a **virtual microphone**. Which means selecting
+it in Teams, in Discord, in Meet, in every app — and doing it again every time
+an update resets the default device. When it goes wrong, the app picks up the
+wrong microphone and nobody can hear you.
 
-Kwiet ne crée aucun périphérique. Il se greffe sur **votre** micro, à
-l'intérieur du moteur audio de Windows. Les applications ne voient rien
-d'inhabituel : elles ouvrent le micro qu'elles ont toujours ouvert, et le signal
-qui en sort est déjà propre.
+Kwiet creates no device. It attaches to **your** microphone, inside the Windows
+audio engine. Apps see nothing unusual: they open the microphone they have
+always opened, and what comes out of it is already clean.
 
-## Comment ça marche
+## How it works
 
-Kwiet est un **APO** (*Audio Processing Object*) : une DLL COM en espace
-utilisateur, chargée par `audiodg.exe`, le moteur audio de Windows. Aucun
-pilote noyau.
+Kwiet is an **APO** (Audio Processing Object): a user-mode COM DLL loaded by
+`audiodg.exe`, the Windows audio engine. No kernel driver.
 
-Le débruitage est fait par [DeepFilterNet3](https://github.com/Rikorose/DeepFilterNet),
-un réseau de ~2 M de paramètres — bien trop lourd pour le thread temps réel
-d'`audiodg`, qui doit rendre un bloc toutes les 10 ms sans jamais allouer, ni
-prendre un verrou, ni faire un appel système.
+Denoising is done by [DeepFilterNet3](https://github.com/Rikorose/DeepFilterNet),
+a ~2 M parameter network — far too heavy for `audiodg`'s real-time thread, which
+must return a block every 10 ms without ever allocating, taking a lock, or
+making a system call.
 
 ```
-APOProcess()  — thread temps réel d'audiodg ————————————————————————
-   |  pousse l'entrée dans un anneau SPSC sans verrou (préalloué)
-   |  récupère la sortie traitée (retard fixe de 30 ms)
-   +— si le worker est mort ou en retard : PASSTHROUGH immédiat
-                                           jamais de silence, jamais de blocage
-Worker  — thread de priorité normale ————————————————————————————————
-   +— consomme l'anneau, appelle le cdylib Rust (DeepFilterNet3)
+APOProcess()  — audiodg's real-time thread ——————————————————————————
+   |  pushes input into a lock-free SPSC ring (preallocated)
+   |  pops processed output (fixed 30 ms delay)
+   +— if the worker is dead or late: PASSTHROUGH immediately
+                                     never silence, never a stall
+Worker  — normal-priority thread —————————————————————————————————————
+   +— drains the ring, calls the Rust cdylib (DeepFilterNet3)
 ```
 
-Le **fail-open est structurel** : un APO qui plante `audiodg` prive la machine
-entière de son. Tout le design part de là. Si le DSP disparaît, le son passe
-sans traitement — c'est le pire qui puisse arriver.
+**Fail-open is structural**: an APO that crashes `audiodg` leaves the whole
+machine without sound. Every design decision follows from that. If the DSP
+disappears, audio passes through untouched — that is the worst case.
 
-Détails et décisions : [`docs/architecture.md`](docs/architecture.md).
+Details and decisions: [`docs/architecture.md`](docs/architecture.md) *(French)*.
 
-## Mesures
+## Measurements
 
-Sur Windows 11 build 26200, micro USB, 48 kHz stéréo :
+Windows 11 build 26200, USB microphone, 48 kHz stereo:
 
 | | |
 |---|---|
-| Suppression de bruit | **≥ 24 dB** sur source contrôlée |
-| Latence ajoutée | **30 ms**, fixe |
-| Charge CPU | **~2 %** d'un cœur (RTF 0,017–0,020) |
-| Décrochages | 0 |
+| Noise suppression | **≥ 24 dB** on a controlled source |
+| Added latency | **30 ms**, fixed |
+| CPU | **~2 %** of one core (RTF 0.017–0.020) |
+| Dropouts | 0 |
 
-## Installation
+## Installing
 
 > [!IMPORTANT]
-> **Après l'installation, il reste une étape que Kwiet ne peut pas faire à votre
-> place.** Windows 11 exige que vous choisissiez vous-même le pack d'effets :
-> **Paramètres → Son → votre micro → Améliorations audio → Kwiet**.
-> Tant que ce n'est pas fait, Kwiet est installé et complètement inerte. Le
-> panneau vous le dira, avec un bouton pour ouvrir la bonne page.
+> **One step after installing is not ours to take.** Windows 11 requires you to
+> choose the effect pack yourself: **Settings → Sound → your microphone →
+> Audio enhancements → Kwiet**. Until you do, Kwiet is installed and entirely
+> inert. The panel will tell you so, with a button to open the right page.
 
-1. Téléchargez le MSI correspondant à votre langue —
-   `Kwiet_x.y.z_x64_fr-FR.msi` ou `Kwiet_x.y.z_x64_en-US.msi` — depuis les
+1. Download the MSI for your language — `Kwiet_x.y.z_x64_en-US.msi` or
+   `Kwiet_x.y.z_x64_fr-FR.msi` — from
    [releases](https://github.com/smolleyes/kwiet/releases).
-2. Lancez-le. Il demande l'élévation : le pack d'effets est un package pilote,
-   il s'enregistre auprès de Windows via `pnputil`. Le son est brièvement coupé.
-3. Choisissez Kwiet dans les améliorations audio de votre micro (voir ci-dessus).
-4. L'icône dans la zone de notification ouvre le panneau.
+2. Run it. It asks for elevation: the effect pack is a driver package and
+   registers with Windows through `pnputil`. Sound cuts out briefly.
+3. Choose Kwiet in your microphone's audio enhancements (see above).
+4. The tray icon opens the panel.
 
-La désinstallation retire le pack du magasin de pilotes en même temps que
-l'application.
+Uninstalling removes the pack from the driver store along with the app.
 
-### Prérequis
+### Requirements
 
-- Windows 11 **24H2 ou plus récent** (x64). Le mécanisme de pack d'effets
-  utilisé ici n'existe pas sur les versions antérieures.
-- Un micro qui négocie **48 kHz**. En dehors, Kwiet se met volontairement en
-  passthrough plutôt que de rééchantillonner à l'aveugle.
+- Windows 11 **24H2 or newer** (x64). The effect-pack mechanism used here does
+  not exist on earlier versions.
+- A microphone that negotiates **48 kHz**. Outside that, Kwiet deliberately
+  falls back to passthrough rather than resampling blind.
 
-> [!WARNING]
-> **Signature.** Les binaires publiés sont signés avec un certificat de
-> développement. Il suffit à construire et tester ici, où ce certificat est
-> installé dans les magasins de confiance, mais **pas** sur une machine tierce :
-> Windows refuse un package pilote dont le catalogue ne remonte pas à une
-> autorité de confiance.
->
-> Ce qu'il faut pour y remédier : un **certificat de signature de code
-> commercial** ordinaire. La documentation Microsoft sur les
-> [exigences de signature à l'installation PnP](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/pnp-device-installation-signing-requirements--windows-vista-and-later-)
-> demande que le catalogue soit signé « par WHQL **ou** par un certificat de
-> release tiers ». L'obligation de passer par le Dev Portal est scopée aux
-> pilotes **noyau** — Kwiet n'en contient aucun, c'est une DLL COM usermode.
->
-> Non vérifié pour autant : aucune installation n'a été tentée avec un
-> certificat commercial sur une machine propre. Et Windows en mode S exige WHQL
-> quoi qu'il arrive.
+## The panel
 
-## Le panneau
+One idea, repeated everywhere: **celadon is what your apps receive, amber is
+what Kwiet took away.** The gap between them is the product.
 
-Une seule idée, répétée partout : **le céladon est ce que vos applications
-reçoivent, l'ambre est ce que Kwiet a retiré.** L'écart entre les deux est le
-produit.
+- **Scope** — the last few seconds, as two stacked envelopes.
+- **Meter** — the present instant, as one bar: the bright fill is the signal
+  going out, the amber beyond it is the noise removed.
+- **Strength** — from gentle to maximum. Higher means total silence between
+  words, at the risk of clipping their attacks.
+- **Toggle** — immediate bypass, without dropping the stream.
 
-- **Oscilloscope** — les dernières secondes, en deux enveloppes superposées.
-- **VU-mètre** — l'instant, en une barre : le remplissage vif est le signal
-  transmis, l'ambre qui dépasse est le bruit supprimé.
-- **Intensité** — de discrète à maximale. Plus haut, le silence entre les mots
-  devient total, au risque de raboter les attaques.
-- **Interrupteur** — contournement immédiat, sans couper le flux.
+The panel speaks **English or French**, following Windows, and switches by hand
+at the bottom right.
 
-Le panneau parle **français ou anglais**, selon Windows, et se bascule à la main
-en bas à droite.
+## Building from source
 
-## Construire depuis les sources
-
-Prérequis : Visual Studio 2019+ (charge de travail C++, SDK Windows 10/11),
-CMake ≥ 3.21, Rust stable, Node 20+.
+Requirements: Visual Studio 2019+ (C++ workload, Windows 10/11 SDK),
+CMake ≥ 3.21, stable Rust, Node 20+.
 
 ```powershell
-# 1. L'APO (C++)
+# 1. The APO (C++)
 cmake -S apo -B apo/build -A x64
 cmake --build apo/build --config Release
 
-# 2. Le DSP (Rust, embarque le modèle DeepFilterNet3)
+# 2. The DSP (Rust, embeds the DeepFilterNet3 model)
 cd dsp ; cargo build --release ; cd ..
 
-# 3. Le pack d'effets, signé et horodaté
+# 3. The effect pack, signed and timestamped
 .\installer\effectpack\build-package.ps1 -Version 0.2.2 `
-    -CertPath mon-certificat.pfx -CertPassword $env:PFX_PW
+    -CertPath my-certificate.pfx -CertPassword $env:PFX_PW
 
-# 4. L'application et l'installeur
+# 4. The app and the installer
 cd ui ; npm ci ; npm run tauri build
-# -> ui/src-tauri/target/release/bundle/msi/Kwiet_0.2.2_x64_fr-FR.msi
-#    ui/src-tauri/target/release/bundle/msi/Kwiet_0.2.2_x64_en-US.msi
+# -> ui/src-tauri/target/release/bundle/msi/Kwiet_0.2.2_x64_en-US.msi
+#    ui/src-tauri/target/release/bundle/msi/Kwiet_0.2.2_x64_fr-FR.msi
 ```
 
-Le format est **MSI** et non NSIS : les stubs NSIS déclenchent régulièrement des
-faux positifs antivirus, un paquet Windows Installer beaucoup moins. Le pack
-d'effets est posé par une CustomAction différée, définie dans
+The format is **MSI**, not NSIS: NSIS stubs draw antivirus false positives far
+more often than a Windows Installer package does. The effect pack is placed by a
+deferred custom action, defined in
 [`ui/src-tauri/wix/effectpack.wxs`](ui/src-tauri/wix/effectpack.wxs).
 
-> [!CAUTION]
-> **N'installez pas un APO en cours de développement sur votre poste de
-> travail.** Un APO qui plante prive la machine de son au démarrage. Utilisez
-> une VM ou une machine dédiée : [`docs/procedure-test-vm.md`](docs/procedure-test-vm.md).
+Icons and logo are generated: `node assets/build-assets.mjs`.
 
-Les icônes et le logo sont générés : `node assets/build-assets.mjs`.
+An APO under development is best tested on a VM or a dedicated machine — one
+that crashes takes the whole machine's sound with it:
+[`docs/procedure-test-vm.md`](docs/procedure-test-vm.md) *(French)*.
 
-## Structure du dépôt
+## Repository layout
 
-| Dossier | Rôle |
+| Directory | Contents |
 |---|---|
-| [`apo/`](apo/) | C++ : le shim COM, les anneaux SPSC, le worker, la mémoire partagée |
-| [`dsp/`](dsp/) | Rust cdylib : DeepFilterNet3 derrière une ABI C stable |
-| [`ui/`](ui/) | Tauri v2 : panneau, zone de notification, installeur NSIS |
-| [`installer/`](installer/) | Pack d'effets (INF, catalogue) et scripts d'installation |
-| [`assets/`](assets/) | Identité visuelle, générée par script |
-| [`bench/`](bench/) | Outils de mesure |
-| [`docs/`](docs/) | Décisions d'architecture, procédure de test |
-
-## Ce qui n'est pas fait
-
-Par honnêteté, plutôt que de le laisser découvrir à l'usage :
-
-- **Signature de release** — voir l'avertissement plus haut. C'est le blocage
-  pour une diffusion au-delà de la machine de développement.
-- **Rééchantillonnage** — hors 48 kHz, Kwiet passe en passthrough.
-- **Soak 48 h** — changements de fréquence, débranchement à chaud, veille et
-  reprise, plusieurs applications : jamais tenu sur une durée longue.
-- **Annulation d'écho** — délibérément absente. La réclamer ferait désactiver à
-  Chrome son propre annuleur, qui est bien meilleur que ce qu'on livrerait.
-- **La latence annoncée** (30 ms) ne compte que l'anneau, pas le lookahead
-  propre à DeepFilterNet3.
+| [`apo/`](apo/) | C++: the COM shim, SPSC rings, worker thread, shared memory |
+| [`dsp/`](dsp/) | Rust cdylib: DeepFilterNet3 behind a stable C ABI |
+| [`ui/`](ui/) | Tauri v2: panel, tray, MSI installer |
+| [`installer/`](installer/) | Effect pack (INF, catalogue) and install scripts |
+| [`assets/`](assets/) | Visual identity, generated by script |
+| [`bench/`](bench/) | Measurement tools |
+| [`docs/`](docs/) | Architecture decisions, test procedure |
 
 ## Licence
 
 [Apache-2.0](LICENSE).
 
-DeepFilterNet3 est sous double licence MIT/Apache-2.0, compatible. Le modèle
-embarqué provient du projet [DeepFilterNet](https://github.com/Rikorose/DeepFilterNet)
-de Hendrik Schröter.
+DeepFilterNet3 is dual MIT/Apache-2.0, compatible. The embedded model comes from
+the [DeepFilterNet](https://github.com/Rikorose/DeepFilterNet) project by
+Hendrik Schröter.
