@@ -46,6 +46,35 @@ foreach ($binary in $ApoDll, $DspDll) {
     }
 }
 
+# Une build KWIET_DEV_LOG écrit un journal depuis audiodg et lit une clé de
+# registre qui écrase l'atténuation choisie par l'utilisateur. C'est précieux en
+# développement et inacceptable chez quelqu'un d'autre — et ça ne se voit pas :
+# le pack s'installe et fonctionne, simplement il n'obéit plus au panneau.
+# Le chemin du journal est embarqué dans le binaire, ce qui le trahit.
+$devMarker = [Text.Encoding]::ASCII.GetBytes('apo-log.txt')
+$apoBytes = [IO.File]::ReadAllBytes($ApoDll)
+$isDevBuild = $false
+for ($i = 0; $i -le $apoBytes.Length - $devMarker.Length; $i++) {
+    if ($apoBytes[$i] -ne $devMarker[0]) { continue }
+    $match = $true
+    for ($j = 1; $j -lt $devMarker.Length; $j++) {
+        if ($apoBytes[$i + $j] -ne $devMarker[$j]) { $match = $false; break }
+    }
+    if ($match) { $isDevBuild = $true; break }
+}
+if ($isDevBuild) {
+    $message = @'
+KwietApo.dll est une build de developpement (KWIET_DEV_LOG).
+Elle journalise depuis audiodg et obeit a HKLM\SOFTWARE\Kwiet\AttenuationDbTenths
+plutot qu'au panneau. Reconfigure sans l'option :
+
+    cmake -S apo -B apo/build -A x64 -DKWIET_DEV_LOG=OFF
+    cmake --build apo/build --config Release --clean-first
+'@
+    if ($Version) { throw $message }
+    Write-Warning $message   # sans -Version, c'est une build locale : on avertit
+}
+
 Write-Host '=== Kwiet — assemblage du pack d''effets ==='
 
 # --- Contenu --------------------------------------------------------------

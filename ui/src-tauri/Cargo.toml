@@ -29,6 +29,8 @@ features = [
     "Win32_UI_WindowsAndMessaging",
     # Picking French or English on first run.
     "Win32_Globalization",
+    # Anchoring the panel above the taskbar rather than centring it.
+    "Win32_Graphics_Gdi",
 ]
 
 [profile.release]

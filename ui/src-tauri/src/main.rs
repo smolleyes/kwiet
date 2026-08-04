@@ -11,10 +11,14 @@ use std::time::Duration;
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{Manager, State, WindowEvent};
+use tauri::{Manager, PhysicalPosition, State, WindowEvent};
 use windows::core::w;
+use windows::Win32::Foundation::{POINT, RECT};
+use windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTOPRIMARY,
+};
 use windows::Win32::UI::Shell::ShellExecuteW;
-use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, SW_SHOWNORMAL};
 
 use control::{ControlHandle, Snapshot};
 use pack::PackStatus;
@@ -125,6 +129,42 @@ fn set_aggressiveness(state: State<'_, AppState>, db: f64) {
     settings.save();
 }
 
+/// Usable area of the screen the pointer is on, i.e. the desktop minus the
+/// taskbar. Taken from the pointer rather than the primary monitor so that on a
+/// multi-screen desk the panel opens next to the tray icon that was clicked.
+fn work_area() -> Option<RECT> {
+    // SAFETY: both calls take pointers to stack values we own, and each result
+    // is checked before the struct is read.
+    unsafe {
+        let mut point = POINT::default();
+        GetCursorPos(&mut point).ok()?;
+        let monitor = MonitorFromPoint(point, MONITOR_DEFAULTTOPRIMARY);
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if GetMonitorInfoW(monitor, &mut info).as_bool() {
+            Some(info.rcWork)
+        } else {
+            None
+        }
+    }
+}
+
+/// Anchors the panel where a tray application belongs: bottom right, tucked
+/// above the taskbar. `rcWork` already excludes the taskbar wherever the user
+/// has put it, so a docked-left or top taskbar lands correctly too.
+fn anchor_to_tray(window: &tauri::WebviewWindow) {
+    const MARGIN: i32 = 12;
+    let (Some(work), Ok(size)) = (work_area(), window.outer_size()) else {
+        return;
+    };
+    // Both are physical pixels, so no scale factor is involved.
+    let x = work.right - size.width as i32 - MARGIN;
+    let y = work.bottom - size.height as i32 - MARGIN;
+    let _ = window.set_position(PhysicalPosition::new(x.max(work.left), y.max(work.top)));
+}
+
 fn toggle_panel(app: &tauri::AppHandle) {
     let Some(window) = app.get_webview_window("panel") else {
         return;
@@ -132,6 +172,9 @@ fn toggle_panel(app: &tauri::AppHandle) {
     if window.is_visible().unwrap_or(false) {
         let _ = window.hide();
     } else {
+        // Re-anchored on every open: the taskbar may have moved, or the click
+        // may have come from a different screen than last time.
+        anchor_to_tray(&window);
         let _ = window.show();
         let _ = window.set_focus();
     }
